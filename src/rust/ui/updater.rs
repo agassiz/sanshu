@@ -1,6 +1,8 @@
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, State};
 use serde::{Deserialize, Serialize};
 use std::{fs, io::Write, path::PathBuf, process::Command};
+use crate::config::AppState;
+use crate::network::{detect_geo_location, ProxyDetector, ProxyInfo, create_update_client, create_download_client};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UpdateInfo {
@@ -21,18 +23,25 @@ pub struct UpdateProgress {
 
 /// 检查是否有可用更新
 #[tauri::command]
-pub async fn check_for_updates(app: AppHandle) -> Result<UpdateInfo, String> {
+pub async fn check_for_updates(app: AppHandle, state: State<'_, AppState>) -> Result<UpdateInfo, String> {
     log::info!("🔍 开始检查更新");
-    
-    // 由于Tauri更新器无法处理中文tag，这里直接使用GitHub API检查
-    let client = reqwest::Client::new();
+
+    // 智能代理检测和配置
+    let proxy_info = detect_and_configure_proxy(&state).await;
+
+    // 创建HTTP客户端（带或不带代理）
+    let client = create_update_client(proxy_info.as_ref())
+        .map_err(|e| {
+            log::error!("❌ 创建HTTP客户端失败: {}", e);
+            format!("创建HTTP客户端失败: {}", e)
+        })?;
+
     log::info!("📡 发送 GitHub API 请求");
-    
+
     let response = client
         .get("https://api.github.com/repos/yuaotian/sansu/releases/latest")
         .header("User-Agent", "sansu-app/1.0")
         .header("Accept", "application/vnd.github.v3+json")
-        .timeout(std::time::Duration::from_secs(30))
         .send()
         .await
         .map_err(|e| {
@@ -133,12 +142,12 @@ fn compare_versions(v1: &str, v2: &str) -> bool {
 
 /// 下载并安装更新
 #[tauri::command]
-pub async fn download_and_install_update(app: AppHandle) -> Result<(), String> {
+pub async fn download_and_install_update(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     log::info!("🚀 开始下载和安装更新");
 
     // 首先检查更新信息
     log::info!("🔍 重新检查更新信息");
-    let update_info = check_for_updates(app.clone()).await?;
+    let update_info = check_for_updates(app.clone(), state.clone()).await?;
 
     log::info!("📊 更新信息: {:?}", update_info);
 
@@ -155,7 +164,7 @@ pub async fn download_and_install_update(app: AppHandle) -> Result<(), String> {
     let _ = app.emit("update_download_started", ());
 
     // 实现真正的下载和安装逻辑
-    match download_and_install_update_impl(&app, &update_info).await {
+    match download_and_install_update_impl(&app, &state, &update_info).await {
         Ok(_) => {
             log::info!("✅ 更新下载和安装成功");
             let _ = app.emit("update_install_finished", ());
@@ -250,7 +259,11 @@ fn get_platform_download_url(release: &serde_json::Value) -> Result<String, Stri
 }
 
 /// 实际的下载和安装实现
-async fn download_and_install_update_impl(app: &AppHandle, update_info: &UpdateInfo) -> Result<(), String> {
+async fn download_and_install_update_impl(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    update_info: &UpdateInfo
+) -> Result<(), String> {
     log::info!("🚀 开始自动更新实现");
     log::info!("📋 更新信息: {:?}", update_info);
 
@@ -277,8 +290,13 @@ async fn download_and_install_update_impl(app: &AppHandle, update_info: &UpdateI
 
     let file_path = temp_dir.join(&file_name);
 
-    // 下载文件
-    let client = reqwest::Client::new();
+    // 智能代理检测和配置（用于下载）
+    let proxy_info = detect_and_configure_proxy(state).await;
+
+    // 创建用于下载的HTTP客户端（带或不带代理）
+    let client = create_download_client(proxy_info.as_ref())
+        .map_err(|e| format!("创建下载客户端失败: {}", e))?;
+
     let mut response = client
         .get(&update_info.download_url)
         .send()
@@ -804,5 +822,92 @@ fn extract_version_from_filename(filename: &str) -> Option<String> {
         }
     }
 
+    None
+}
+
+/// 智能代理检测和配置
+///
+/// 根据配置和地理位置，自动检测并配置代理
+///
+/// # 工作流程
+/// 1. 读取代理配置
+/// 2. 如果启用自动检测：
+///    - 检测IP地理位置
+///    - 如果在中国大陆且配置了仅CN使用代理，则检测本地代理
+///    - 否则使用直连
+/// 3. 如果启用手动代理：
+///    - 直接使用配置的代理
+/// 4. 否则使用直连
+///
+/// # 返回值
+/// - `Some(ProxyInfo)`: 使用代理
+/// - `None`: 使用直连
+async fn detect_and_configure_proxy(state: &State<'_, AppState>) -> Option<ProxyInfo> {
+    // 读取代理配置
+    let proxy_config = {
+        let config = state.config.lock().ok()?;
+        config.proxy_config.clone()
+    };
+
+    log::info!("📋 代理配置: auto_detect={}, enabled={}, only_for_cn={}",
+        proxy_config.auto_detect, proxy_config.enabled, proxy_config.only_for_cn);
+
+    // 如果启用自动检测
+    if proxy_config.auto_detect {
+        log::info!("🔍 启用自动代理检测");
+
+        // 检测地理位置
+        let country = detect_geo_location().await;
+        log::info!("🌍 检测到国家代码: {}", country);
+
+        // 判断是否需要使用代理
+        let should_use_proxy = if proxy_config.only_for_cn {
+            // 仅在中国大陆使用代理
+            country == "CN"
+        } else {
+            // 所有地区都尝试使用代理
+            true
+        };
+
+        if should_use_proxy {
+            log::info!("✅ 满足代理使用条件，开始检测本地代理");
+
+            // 检测本地可用代理
+            if let Some(proxy_info) = ProxyDetector::detect_available_proxy().await {
+                log::info!("✅ 使用自动检测的代理: {}:{} ({})",
+                    proxy_info.host, proxy_info.port, proxy_info.proxy_type);
+                return Some(proxy_info);
+            } else {
+                log::warn!("⚠️ 未检测到可用代理，使用直连");
+                return None;
+            }
+        } else {
+            log::info!("ℹ️ 不满足代理使用条件（非CN地区），使用直连");
+            return None;
+        }
+    }
+
+    // 如果启用手动代理
+    if proxy_config.enabled {
+        log::info!("🔧 使用手动配置的代理");
+
+        let proxy_type = match proxy_config.proxy_type.as_str() {
+            "socks5" => crate::network::proxy::ProxyType::Socks5,
+            _ => crate::network::proxy::ProxyType::Http,
+        };
+
+        let proxy_info = ProxyInfo::new(
+            proxy_type,
+            proxy_config.host,
+            proxy_config.port,
+        );
+
+        log::info!("✅ 使用手动代理: {}:{} ({})",
+            proxy_info.host, proxy_info.port, proxy_info.proxy_type);
+
+        return Some(proxy_info);
+    }
+
+    log::info!("ℹ️ 未启用代理，使用直连");
     None
 }

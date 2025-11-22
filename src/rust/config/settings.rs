@@ -19,6 +19,8 @@ pub struct AppConfig {
     pub custom_prompt_config: CustomPromptConfig, // 自定义prompt配置
     #[serde(default = "default_shortcut_config")]
     pub shortcut_config: ShortcutConfig, // 自定义快捷键配置
+    #[serde(default = "default_proxy_config")]
+    pub proxy_config: ProxyConfig, // 代理配置
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -190,6 +192,34 @@ pub struct TelegramConfig {
     pub api_base_url: String, // Telegram API基础URL
 }
 
+/// 代理配置
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ProxyConfig {
+    /// 是否启用自动检测代理
+    #[serde(default = "default_proxy_auto_detect")]
+    pub auto_detect: bool,
+
+    /// 是否启用代理（手动模式）
+    #[serde(default = "default_proxy_enabled")]
+    pub enabled: bool,
+
+    /// 代理类型: "http" 或 "socks5"
+    #[serde(default = "default_proxy_type")]
+    pub proxy_type: String,
+
+    /// 代理主机地址
+    #[serde(default = "default_proxy_host")]
+    pub host: String,
+
+    /// 代理端口
+    #[serde(default = "default_proxy_port")]
+    pub port: u16,
+
+    /// 仅在中国大陆地区使用代理
+    #[serde(default = "default_proxy_only_for_cn")]
+    pub only_for_cn: bool,
+}
+
 #[derive(Debug)]
 pub struct AppState {
     pub config: Mutex<AppConfig>,
@@ -209,6 +239,7 @@ impl Default for AppConfig {
             telegram_config: default_telegram_config(),
             custom_prompt_config: default_custom_prompt_config(),
             shortcut_config: default_shortcut_config(),
+            proxy_config: default_proxy_config(),
         }
     }
 }
@@ -678,4 +709,39 @@ pub fn default_shortcuts() -> HashMap<String, ShortcutBinding> {
     shortcuts
 }
 
+// 代理配置默认值函数
+pub fn default_proxy_config() -> ProxyConfig {
+    ProxyConfig {
+        auto_detect: default_proxy_auto_detect(),
+        enabled: default_proxy_enabled(),
+        proxy_type: default_proxy_type(),
+        host: default_proxy_host(),
+        port: default_proxy_port(),
+        only_for_cn: default_proxy_only_for_cn(),
+    }
+}
+
+pub fn default_proxy_auto_detect() -> bool {
+    true // 默认启用自动检测
+}
+
+pub fn default_proxy_enabled() -> bool {
+    false // 默认不启用手动代理
+}
+
+pub fn default_proxy_type() -> String {
+    "http".to_string() // 默认使用HTTP代理
+}
+
+pub fn default_proxy_host() -> String {
+    "127.0.0.1".to_string() // 默认本地代理
+}
+
+pub fn default_proxy_port() -> u16 {
+    7890 // 默认Clash混合代理端口
+}
+
+pub fn default_proxy_only_for_cn() -> bool {
+    true // 默认仅在中国大陆地区使用代理
+}
 

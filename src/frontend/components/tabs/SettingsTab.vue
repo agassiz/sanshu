@@ -6,6 +6,7 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import AudioSettings from '../settings/AudioSettings.vue'
 import CustomPromptSettings from '../settings/CustomPromptSettings.vue'
 import FontSettings from '../settings/FontSettings.vue'
+import ProxySettings from '../settings/ProxySettings.vue'
 import ReplySettings from '../settings/ReplySettings.vue'
 import ShortcutSettings from '../settings/ShortcutSettings.vue'
 import TelegramSettings from '../settings/TelegramSettings.vue'
@@ -312,6 +313,30 @@ function handleWindowSizeUpdate(size: { width: number, height: number, fixed: bo
         </template>
         <div class="setting-content">
           <ShortcutSettings />
+        </div>
+      </n-collapse-item>
+
+      <!-- 代理设置 -->
+      <n-collapse-item name="proxy">
+        <template #header>
+          <div class="flex items-center justify-between w-full">
+            <div class="flex items-center">
+              <div class="w-10 h-10 rounded-lg bg-cyan-100 dark:bg-cyan-900 flex items-center justify-center mr-4">
+                <div class="i-carbon-network-3 text-lg text-cyan-600 dark:text-cyan-400" />
+              </div>
+              <div>
+                <div class="text-lg font-medium tracking-tight mb-1">
+                  代理设置
+                </div>
+                <div class="text-sm opacity-60 font-normal">
+                  配置更新检查的网络代理
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+        <div class="setting-content">
+          <ProxySettings />
         </div>
       </n-collapse-item>
 

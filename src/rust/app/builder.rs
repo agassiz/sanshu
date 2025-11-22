@@ -125,7 +125,13 @@ pub fn build_tauri_app() -> Builder<tauri::Wry> {
             check_for_updates,
             download_and_install_update,
             get_current_version,
-            restart_app
+            restart_app,
+
+            // 代理配置命令
+            crate::network::commands::get_proxy_config,
+            crate::network::commands::set_proxy_config,
+            crate::network::commands::test_proxy_connection,
+            crate::network::commands::detect_available_proxy
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();
