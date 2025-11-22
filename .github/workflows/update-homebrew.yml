@@ -1,4 +1,4 @@
-name: Update Homebrew Formula
+name: 更新 Homebrew 配方
 
 on:
   release:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release tag name (e.g., v0.2.3)'
+        description: '发布标签名称 (例如 v0.2.3)'
         required: true
         type: string
 
@@ -17,13 +17,13 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
-      - name: Get release information
+      - name: 获取发布信息
         id: release_info
         run: |
           if [ "${{ github.event_name }}" = "release" ]; then
@@ -38,7 +38,7 @@ jobs:
           echo "Release tag: ${TAG_NAME}"
           echo "Version number: ${VERSION_NUMBER}"
 
-      - name: Verify release assets exist
+      - name: 验证发布资源是否存在
         run: |
           TAG_NAME="${{ steps.release_info.outputs.tag_name }}"
           VERSION_NUMBER="${{ steps.release_info.outputs.version_number }}"
@@ -62,7 +62,7 @@ jobs:
 
           echo "✅ All release assets verified"
 
-      - name: Calculate SHA256 for release assets
+      - name: 计算发布资源的 SHA256
         id: sha256
         run: |
           TAG_NAME="${{ steps.release_info.outputs.tag_name }}"
@@ -88,20 +88,20 @@ jobs:
           echo "Intel SHA256: $INTEL_SHA256"
           echo "ARM SHA256: $ARM_SHA256"
 
-      - name: Checkout homebrew-sansu repository
+      - name: 检出 homebrew-sansu 仓库
         uses: actions/checkout@v4
         with:
           repository: imhuso/homebrew-sansu
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
           path: homebrew-tap
 
-      - name: Configure git for homebrew-tap
+      - name: 配置 homebrew-tap 的 Git
         run: |
           cd homebrew-tap
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
 
-      - name: Update Homebrew Formula
+      - name: 更新 Homebrew 配方
         run: |
           TAG_NAME="${{ steps.release_info.outputs.tag_name }}"
           VERSION_NUMBER="${{ steps.release_info.outputs.version_number }}"
@@ -136,7 +136,7 @@ jobs:
           sed -i "s|https://github.com/imhuso/sansu/releases/download/v[0-9.]*/sansu-cli-v[0-9.]*-macos-aarch64.tar.gz|${ARM_URL}|g" Formula/sansu.rb
           sed -i "/on_arm do/,/end/ { /sha256/ s|sha256[[:space:]]*\".*\"|sha256  \"${ARM_SHA256}\"|; }" Formula/sansu.rb
 
-      - name: Verify Formula changes
+      - name: 验证配方更改
         run: |
           cd homebrew-tap
 
@@ -146,7 +146,7 @@ jobs:
           echo "=== Updated Formula content ==="
           cat Formula/sansu.rb
 
-      - name: Commit and push to homebrew-sansu repository
+      - name: 提交并推送到 homebrew-sansu 仓库
         run: |
           TAG_NAME="${{ steps.release_info.outputs.tag_name }}"
           VERSION_NUMBER="${{ steps.release_info.outputs.version_number }}"
@@ -169,7 +169,7 @@ jobs:
           git push origin main
           echo "✅ Successfully updated homebrew-sansu repository"
 
-      - name: Test Formula (optional)
+      - name: 测试配方 (可选)
         run: |
           echo "🧪 Formula update completed successfully!"
           echo "You can test the formula with:"

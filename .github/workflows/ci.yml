@@ -1,4 +1,4 @@
-name: CI
+name: 持续集成
 
 on:
   push:
@@ -9,12 +9,12 @@ on:
 
 jobs:
   check:
-    name: Check
+    name: 检查代码
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system dependencies
+      - name: 安装系统依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -34,25 +34,25 @@ jobs:
             libpulse-dev \
             libjack-dev
 
-      - name: Setup Node.js
+      - name: 安装 Node.js
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
 
-      - name: Install pnpm
+      - name: 安装 pnpm
         uses: pnpm/action-setup@v4
 
-      - name: Install Rust stable
+      - name: 安装 Rust stable 工具链
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Rust cache
+      - name: 配置 Rust 缓存
         uses: swatinem/rust-cache@v2
 
-      - name: Install frontend dependencies
+      - name: 安装前端依赖
         run: pnpm install
 
-      - name: Check (Rust)
+      - name: 检查代码 (Rust)
         run: cargo check --verbose
 
-      - name: Clippy (Linting)
+      - name: 代码规范检查 (Clippy)
         run: cargo clippy -- -D warnings

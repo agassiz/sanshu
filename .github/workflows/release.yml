@@ -1,4 +1,4 @@
-name: Build CLI Tools
+name: 构建 CLI 工具
 
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system dependencies (Linux)
+      - name: 安装系统依赖 (Linux)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
@@ -51,29 +51,29 @@ jobs:
             libpulse-dev \
             libjack-dev
 
-      - name: Setup Node.js
+      - name: 安装 Node.js
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
 
-      - name: Install pnpm
+      - name: 安装 pnpm
         uses: pnpm/action-setup@v4
 
-      - name: Install Rust stable
+      - name: 安装 Rust stable 工具链
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      - name: Rust cache
+      - name: 配置 Rust 缓存
         uses: swatinem/rust-cache@v2
 
-      - name: Install frontend dependencies
+      - name: 安装前端依赖
         run: pnpm install
 
-      - name: Install Tauri CLI
+      - name: 安装 Tauri CLI
         run: cargo install tauri-cli --version "^2.0" --locked
 
-      - name: Build with Tauri (no bundle)
+      - name: 使用 Tauri 构建 (无打包)
         shell: bash
         run: |
           if [[ "${{ matrix.platform }}" == "macos-latest" ]]; then
@@ -89,7 +89,7 @@ jobs:
             cargo tauri build --no-bundle
           fi
 
-      - name: Create CLI package
+      - name: 创建 CLI 压缩包
         shell: bash
         run: |
           mkdir -p cli-package
@@ -123,7 +123,7 @@ jobs:
             tar -czf ../sansu-cli-${TAG_NAME}-${{ matrix.name }}.tar.gz *
           fi
 
-      - name: Upload artifacts
+      - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
           name: sansu-cli-${{ matrix.name }}
@@ -133,19 +133,19 @@ jobs:
           if-no-files-found: ignore
 
   release:
-    name: Create Release
+    name: 创建发布
     needs: build-cli
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
-      - name: Verify version consistency
+      - name: 验证版本一致性
         run: |
           # 获取 git tag 版本号（去掉 v 前缀）
           TAG_NAME="${{ github.ref_name }}"
@@ -179,15 +179,15 @@ jobs:
 
           echo "✅ Version consistency check passed: ${TAG_VERSION_NUMBER}"
 
-      - name: Download all artifacts
+      - name: 下载所有构建产物
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Install git-cliff
+      - name: 安装 git-cliff
         uses: taiki-e/install-action@git-cliff
 
-      - name: Generate changelog and release title
+      - name: 生成变更日志和发布标题
         id: changelog
         run: |
           # 从 GitHub API 获取最新的 release 版本
@@ -245,7 +245,7 @@ jobs:
           echo "release_title=$RELEASE_TITLE" >> $GITHUB_OUTPUT
           echo "Generated release title: $RELEASE_TITLE"
 
-      - name: Create Release
+      - name: 创建发布
         uses: softprops/action-gh-release@v1
         with:
           files: |
@@ -259,7 +259,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Trigger Homebrew Formula Update
+      - name: 触发 Homebrew 配方更新
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
