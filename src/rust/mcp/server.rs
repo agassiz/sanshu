@@ -171,8 +171,8 @@ impl ServerHandler for ZhiServer {
         log_debug!("返回给客户端的工具列表: {:?}", tools.iter().map(|t| &t.name).collect::<Vec<_>>());
 
         Ok(ListToolsResult {
-            tools,
             next_cursor: None,
+            tools,
         })
     }
 
