@@ -918,7 +918,8 @@ pub async fn test_acemcp_proxy_speed(
     project_upload_max_files: Option<u32>,    // 采样模式下的文件上限
     state: State<'_, AppState>,
 ) -> Result<ProxySpeedTestResult, String> {
-    log::info!("🚀 开始代理测速: mode={}, query={}", test_mode, test_query);
+    log::info!("🚀 [SpeedTest] 开始代理测速");
+    log::info!("📋 [SpeedTest] 参数: mode={}, query={}, project={}", test_mode, test_query, project_root_path);
     
     // 获取配置
     let (base_url, token, batch_size, max_lines_per_blob) = {
@@ -931,9 +932,13 @@ pub async fn test_acemcp_proxy_speed(
         )
     };
     
+    log::debug!("⚙️ [SpeedTest] 配置: base_url={}, batch_size={}, max_lines={}", base_url, batch_size, max_lines_per_blob);
+    
     let mut metrics: Vec<SpeedTestMetric> = Vec::new();
     let test_proxy = test_mode == "proxy" || test_mode == "compare";
     let test_direct = test_mode == "direct" || test_mode == "compare";
+    
+    log::info!("🔧 [SpeedTest] 测试模式: test_proxy={}, test_direct={}", test_proxy, test_direct);
     
     // 构建代理信息
     let proxy_info = if test_proxy {
@@ -941,14 +946,18 @@ pub async fn test_acemcp_proxy_speed(
         let port = proxy_port.unwrap_or(7890);
         let p_type = proxy_type.clone().unwrap_or_else(|| "http".to_string());
         Some(DetectedProxy {
-            host,
+            host: host.clone(),
             port,
-            proxy_type: p_type,
+            proxy_type: p_type.clone(),
             response_time_ms: None,
         })
     } else {
         None
     };
+    
+    if let Some(ref pi) = proxy_info {
+        log::info!("🔌 [SpeedTest] 代理配置: {}://{}:{}", pi.proxy_type, pi.host, pi.port);
+    }
 
     // 构建代理设置（用于实际 HTTP 请求，支持 https + 认证）
     let proxy_settings = if test_proxy {
@@ -985,17 +994,22 @@ pub async fn test_acemcp_proxy_speed(
 
     if project_root_path.is_empty() {
         project_files_error = Some("未选择测试项目，已跳过上传测试".to_string());
+        log::warn!("⚠️ [SpeedTest] 未选择测试项目，跳过上传测试");
     } else {
+        log::debug!("📂 [SpeedTest] 获取项目文件列表: {}", project_root_path);
         match AcemcpTool::get_project_files_status(project_root_path.clone()).await {
             Ok(v) => {
                 if v.files.is_empty() {
                     project_files_error = Some("测试项目未发现可索引文件，已跳过上传测试".to_string());
+                    log::warn!("⚠️ [SpeedTest] 测试项目无可索引文件");
                 } else {
+                    log::info!("📁 [SpeedTest] 项目文件数: {} 个", v.files.len());
                     project_files_status = Some(v);
                 }
             }
             Err(e) => {
                 project_files_error = Some(format!("获取测试项目文件列表失败: {}", e));
+                log::error!("❌ [SpeedTest] 获取项目文件列表失败: {}", e);
             }
         }
     }
@@ -1018,6 +1032,9 @@ pub async fn test_acemcp_proxy_speed(
         None
     };
     
+    log::info!("🔗 [SpeedTest] HTTP Client 初始化完成: proxy_client={}, direct_client={}", 
+               proxy_client.is_some(), direct_client.is_some());
+    
     // 1. Ping 测试 - 测量到 ACE 服务器的网络延迟
     let health_url = format!("{}/health", base_url);
     let mut ping_metric = SpeedTestMetric {
@@ -1029,6 +1046,9 @@ pub async fn test_acemcp_proxy_speed(
         error: None,
         search_result_preview: None,
     };
+    
+    log::info!("📡 [SpeedTest] === 阶段1: Ping 测试 ===");
+    log::debug!("📡 [SpeedTest] Ping URL: {}", health_url);
     
     // 代理模式 Ping
     if test_proxy {
@@ -1063,6 +1083,8 @@ pub async fn test_acemcp_proxy_speed(
                     );
                 }
             }
+            log::info!("📡 [SpeedTest] 代理 Ping 完成: avg={}ms, success={}/{}", 
+                       ping_metric.proxy_time_ms.unwrap_or(0), ok.len(), rounds);
         } else {
             ping_metric.success = false;
             append_error(&mut ping_metric.error, "代理 Ping 跳过：代理 client 未初始化".to_string());
@@ -1102,6 +1124,8 @@ pub async fn test_acemcp_proxy_speed(
                 );
             }
         }
+        log::info!("📡 [SpeedTest] 直连 Ping 完成: avg={}ms, success={}/{}", 
+                   ping_metric.direct_time_ms.unwrap_or(0), ok.len(), rounds);
     }
     metrics.push(ping_metric);
     
@@ -1124,7 +1148,12 @@ pub async fn test_acemcp_proxy_speed(
     const MAX_QUERIES: usize = 5;
     if queries.len() > MAX_QUERIES {
         queries.truncate(MAX_QUERIES);
+        log::warn!("⚠️ [SpeedTest] 查询数量超限，已截断为 {} 条", MAX_QUERIES);
     }
+    
+    log::info!("🔍 [SpeedTest] === 阶段2: 语义搜索测试 ===");
+    log::info!("🔍 [SpeedTest] 搜索 URL: {}", search_url);
+    log::info!("🔍 [SpeedTest] 查询数量: {} 条", queries.len());
 
     for q in queries {
         let display_q = if q.len() > 30 {
@@ -1132,6 +1161,8 @@ pub async fn test_acemcp_proxy_speed(
         } else {
             q.clone()
         };
+        
+        log::debug!("🔎 [SpeedTest] 执行搜索: {}", display_q);
 
         let mut search_metric = SpeedTestMetric {
             name: format!("🔍 语义搜索 {}", display_q),
@@ -1166,6 +1197,7 @@ pub async fn test_acemcp_proxy_speed(
                     Err(e) => {
                         search_metric.success = false;
                         search_metric.error = Some(format!("代理搜索失败: {}", e));
+                        log::error!("❌ [SpeedTest] 代理搜索失败: {}", e);
                     }
                 }
             } else {
@@ -1193,6 +1225,11 @@ pub async fn test_acemcp_proxy_speed(
                 }
             }
         }
+        
+        log::info!("🔍 [SpeedTest] 搜索完成 '{}': proxy={}ms, direct={}ms", 
+                   display_q, 
+                   search_metric.proxy_time_ms.map_or("-".to_string(), |v| v.to_string()),
+                   search_metric.direct_time_ms.map_or("-".to_string(), |v| v.to_string()));
 
         metrics.push(search_metric);
     }
@@ -1207,6 +1244,8 @@ pub async fn test_acemcp_proxy_speed(
         error: None,
         search_result_preview: None,
     };
+    
+    log::info!("📤 [SpeedTest] === 阶段3: 单文件上传测试 ===");
 
     if let Some(err) = project_files_error.clone() {
         upload_single_metric.success = false;
@@ -1224,6 +1263,9 @@ pub async fn test_acemcp_proxy_speed(
                         format_bytes(file_bytes),
                         blobs.len()
                     );
+                    
+                    log::debug!("📤 [SpeedTest] 单文件: path={}, size={}, blobs={}", 
+                               file.path, format_bytes(file_bytes), blobs.len());
 
                     if test_proxy {
                         if let Some(ref client) = proxy_client {
@@ -1273,6 +1315,10 @@ pub async fn test_acemcp_proxy_speed(
         error: None,
         search_result_preview: None,
     };
+    
+    log::info!("📦 [SpeedTest] === 阶段4: 项目上传测试 ===");
+    log::info!("📦 [SpeedTest] 上传模式: {}, 文件上限: {:?}", 
+               project_upload_mode, project_upload_max_files_limit);
 
     if let Some(err) = project_files_error.clone() {
         upload_project_metric.success = false;
@@ -1366,6 +1412,9 @@ pub async fn test_acemcp_proxy_speed(
     }
     metrics.push(upload_project_metric);
     
+    log::info!("📊 [SpeedTest] === 测试完成，生成报告 ===");
+    log::info!("📊 [SpeedTest] 总指标数: {}", metrics.len());
+    
     // 生成推荐建议（附带成功率与失败摘要）
     let mut recommendation = generate_recommendation(&metrics, &test_mode);
     let all_success = metrics.iter().all(|m| m.success);
@@ -1408,7 +1457,18 @@ pub async fn test_acemcp_proxy_speed(
         success: all_success,
     };
     
-    log::info!("🚀 代理测速完成: success={}", all_success);
+    log::info!("✅ [SpeedTest] 代理测速完成: success={}, metrics={}, recommendation={}", 
+               all_success, result.metrics.len(), result.recommendation);
+    
+    // 输出每个指标的详细结果
+    for (i, m) in result.metrics.iter().enumerate() {
+        log::debug!("📈 [SpeedTest] 指标[{}] {}: proxy={}ms, direct={}ms, success={}",
+                   i, m.name,
+                   m.proxy_time_ms.map_or("-".to_string(), |v| v.to_string()),
+                   m.direct_time_ms.map_or("-".to_string(), |v| v.to_string()),
+                   m.success);
+    }
+    
     Ok(result)
 }
 
