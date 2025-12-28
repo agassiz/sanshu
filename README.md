@@ -26,14 +26,46 @@
 
 ### 快速下载
 
-从 [GitHub Releases 页面](https://github.com/yuaotian/sanshu/releases) 下载最新版本的预编译可执行文件：
+<div align="center">
 
-| 平台 | 下载链接 | 说明 |
-|------|---------|------|
-| **Windows x86_64** | [下载 .zip](https://github.com/yuaotian/sanshu/releases/latest) | 适用于 64 位 Windows 系统 |
-| **macOS ARM64** | [下载 .tar.gz](https://github.com/yuaotian/sanshu/releases/latest) | 适用于 Apple Silicon (M1/M2/M3) |
-| **macOS x86_64** | [下载 .tar.gz](https://github.com/yuaotian/sanshu/releases/latest) | 适用于 Intel 芯片的 Mac |
-| **Linux x86_64** | [下载 .tar.gz](https://github.com/yuaotian/sanshu/releases/latest) | 适用于 64 位 Linux 系统 |
+**🚀 最新版本下载 - 选择适合您的平台**
+
+</div>
+
+#### 📦 预编译二进制文件
+
+| 🖥️ 平台 | 📥 GitHub 直链 | 🌏 国内加速 | 📋 说明 |
+|:-------:|:-------------:|:-----------:|:------:|
+| **Windows x64** | [下载 .zip ⏬](https://github.com/yuaotian/sanshu/releases/download/v0.2.5/sanshu-cli-v0.2.5-windows-x86_64.zip) | [wget.la ⏬](https://wget.la/https://github.com/yuaotian/sanshu/releases/download/v0.2.5/sanshu-cli-v0.2.5-windows-x86_64.zip) | 64位 Windows 系统 |
+| **macOS ARM64** | [下载 .tar.gz ⏬](https://github.com/yuaotian/sanshu/releases/download/v0.2.5/sanshu-cli-v0.2.5-macos-aarch64.tar.gz) | [wget.la ⏬](https://wget.la/https://github.com/yuaotian/sanshu/releases/download/v0.2.5/sanshu-cli-v0.2.5-macos-aarch64.tar.gz) | Apple Silicon (M1/M2/M3) |
+| **macOS Intel** | [下载 .tar.gz ⏬](https://github.com/yuaotian/sanshu/releases/download/v0.2.5/sanshu-cli-v0.2.5-macos-x86_64.tar.gz) | [wget.la ⏬](https://wget.la/https://github.com/yuaotian/sanshu/releases/download/v0.2.5/sanshu-cli-v0.2.5-macos-x86_64.tar.gz) | Intel 芯片 Mac |
+| **Linux x64** | [下载 .tar.gz ⏬](https://github.com/yuaotian/sanshu/releases/download/v0.2.5/sanshu-cli-v0.2.5-linux-x86_64.tar.gz) | [wget.la ⏬](https://wget.la/https://github.com/yuaotian/sanshu/releases/download/v0.2.5/sanshu-cli-v0.2.5-linux-x86_64.tar.gz) | 64位 Linux 系统 |
+
+> **🎯 如何选择下载链接？**
+>
+> 🇨🇳 **中国大陆用户** → 优先选择 **wget.la 加速链接** 🚀
+>
+> 🌍 **其他地区用户** → 选择 **GitHub 直链** 🌐
+>
+> 📱 **移动端下载** → 所有链接都支持手机浏览器直接下载
+
+#### 🚀 快速使用指南
+
+**对于中国大陆用户**：
+1. 📍 优先选择 **wget.la 加速链接**，下载速度更快
+2. 📱 支持手机端直接下载，无需电脑
+3. ⚡ 自动解压后按照[安装指南](#-安装与使用)配置即可
+
+**下载选项说明**：
+- 🏳️ **GitHub 直链**：全球用户适用，速度取决于网络状况
+- 🇨🇳 **wget.la 加速**：专为中国大陆用户优化，下载速度更快
+- 📱 **移动端友好**：支持手机浏览器直接下载
+- 🔄 **自动更新**：新版本发布后链接自动指向最新版
+
+> **💡 wget.la 是什么？**
+> wget.la 是专业的 GitHub 加速服务，为中国大陆用户提供更快的下载体验。所有链接均指向官方 GitHub Releases，确保安全性和完整性。
+
+> **📋 版本信息**：当前最新版本 v0.2.5 | 上次更新：2024-12-28
 
 ### 安装说明
 
