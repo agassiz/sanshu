@@ -79,6 +79,19 @@ pub async fn get_mcp_tools_config(state: State<'_, AppState>) -> Result<Vec<MCPT
         has_config: true, // Context7 工具有配置选项
     });
 
+    // 图标工坊工具 - UI 功能工具，始终存在，有配置选项
+    tools.push(MCPToolConfig {
+        id: "icon".to_string(),
+        name: "图标工坊".to_string(),
+        description: "搜索和管理 Iconfont 图标库，支持预览、复制 SVG 和下载到项目".to_string(),
+        enabled: config.mcp_config.tools.get("icon").copied().unwrap_or(true),
+        can_disable: true,
+        icon: "i-carbon-image text-lg text-purple-600 dark:text-purple-400".to_string(),
+        icon_bg: "bg-purple-100 dark:bg-purple-900".to_string(),
+        dark_icon_bg: "dark:bg-purple-800".to_string(),
+        has_config: true, // 图标工坊有配置选项
+    });
+
     // 按启用状态排序，启用的在前
     tools.sort_by(|a, b| b.enabled.cmp(&a.enabled));
     

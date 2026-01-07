@@ -143,7 +143,18 @@ pub fn build_tauri_app() -> Builder<tauri::Wry> {
             crate::network::commands::get_proxy_config,
             crate::network::commands::set_proxy_config,
             crate::network::commands::test_proxy_connection,
-            crate::network::commands::detect_available_proxy
+            crate::network::commands::detect_available_proxy,
+
+            // 图标工坊命令
+            crate::mcp::tools::icon::commands::search_icons,
+            crate::mcp::tools::icon::commands::get_icon_content,
+            crate::mcp::tools::icon::commands::save_icons,
+            crate::mcp::tools::icon::commands::get_icon_cache_stats,
+            crate::mcp::tools::icon::commands::clear_icon_cache,
+            crate::mcp::tools::icon::commands::get_icon_config,
+            crate::mcp::tools::icon::commands::set_icon_config,
+            crate::mcp::tools::icon::commands::copy_icon_to_clipboard,
+            crate::mcp::tools::icon::commands::select_icon_save_directory
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();

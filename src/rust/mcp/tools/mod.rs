@@ -5,9 +5,11 @@ pub mod memory;
 pub mod interaction;
 pub mod acemcp;
 pub mod context7;
+pub mod icon;
 
 // 重新导出工具以便访问
 pub use memory::MemoryTool;
 pub use interaction::InteractionTool;
 pub use acemcp::AcemcpTool;
 pub use context7::Context7Tool;
+pub use icon::IconTool;
