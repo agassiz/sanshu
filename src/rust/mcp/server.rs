@@ -3,7 +3,7 @@ use rmcp::{
     ServerHandler, ServiceExt, RoleServer,
     model::{ErrorData as McpError},
     transport::stdio,
-    service::RequestContext,
+    service::{RequestContext, ServerInitializeError},
 };
 use rmcp::model::*;
 use std::collections::HashMap;
@@ -279,12 +279,23 @@ impl ServerHandler for ZhiServer {
 /// 启动MCP服务器
 pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     // 创建并运行服务器
-    let service = ZhiServer::new()
-        .serve(stdio())
-        .await
-        .inspect_err(|e| {
-            log_important!(error, "启动服务器失败: {}", e);
-        })?;
+    let service = match ZhiServer::new().serve(stdio()).await {
+        Ok(service) => service,
+        Err(e) => {
+            match &e {
+                ServerInitializeError::ConnectionClosed(_) => {
+                    log_important!(
+                        error,
+                        "启动服务器失败：初始化阶段连接已关闭。通常是未通过 MCP 客户端以 stdio 管道启动，或客户端启动后立即退出。请检查 MCP 客户端配置（command/args/stdio），不要直接双击运行。"
+                    );
+                }
+                _ => {
+                    log_important!(error, "启动服务器失败: {}", e);
+                }
+            }
+            return Err(Box::new(e));
+        }
+    };
 
     // 等待服务器关闭
     service.waiting().await?;
