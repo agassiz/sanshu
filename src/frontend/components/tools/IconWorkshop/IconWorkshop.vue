@@ -52,6 +52,7 @@ const {
   loading,
   error,
   searchParams,
+  searchResult,
   icons,
   total,
   hasMore,
@@ -81,6 +82,10 @@ const searchInput = ref('')
 const hasResults = computed(() => icons.value.length > 0)
 const isEmpty = computed(() => !loading.value && !!searchInput.value.trim() && !hasResults.value)
 const showEmptyState = computed(() => !loading.value && !searchInput.value && !hasResults.value)
+
+// 默认展开筛选面板（主组件）
+if (props.mode === 'normal')
+  showFilters.value = true
 
 // 通知父组件选中图标变化
 watch(selectedIcons, (value) => {
@@ -192,6 +197,17 @@ async function handleLoadMore() {
   if (loading.value || !hasMore.value)
     return
   await loadMore()
+}
+
+async function handleJumpPage(page: number) {
+  if (loading.value)
+    return
+  if (!searchParams.query.trim())
+    return
+  searchResult.value = null
+  searchParams.page = page
+  clearSelection()
+  await search(false)
 }
 
 // 组件挂载时加载配置
@@ -374,6 +390,7 @@ onMounted(async () => {
       :loading="loading"
       :has-more="hasMore"
       :current-page="currentPage"
+      :page-size="searchParams.pageSize"
       :total="total"
       :is-empty="isEmpty"
       :show-empty-state="showEmptyState"
@@ -382,6 +399,7 @@ onMounted(async () => {
       @dblclick="handleIconDblClick"
       @contextmenu="handleIconContextMenu"
       @load-more="handleLoadMore"
+      @jump="handleJumpPage"
     />
 
     <!-- 错误提示 -->

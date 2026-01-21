@@ -14,6 +14,7 @@ interface Props {
   loading: boolean
   hasMore: boolean
   currentPage: number
+  pageSize: number
   total: number
   isEmpty: boolean
   showEmptyState: boolean
@@ -27,18 +28,28 @@ const emit = defineEmits<{
   dblclick: [icon: IconItem]
   contextmenu: [icon: IconItem, event: MouseEvent]
   'load-more': []
+  jump: [page: number]
 }>()
 
 const hasResults = computed(() => props.icons.length > 0)
+const maxPage = computed(() => Math.max(1, Math.ceil(props.total / props.pageSize)))
 const scrollContainer = ref<HTMLElement | null>(null)
 const loadMoreTrigger = ref<HTMLElement | null>(null)
 const isAutoLoading = ref(false)
+const jumpPage = ref<number | null>(null)
 let observer: IntersectionObserver | null = null
 
 function handleLoadMore() {
   if (props.loading || !props.hasMore)
     return
   emit('load-more')
+}
+
+function handleJump() {
+  if (!jumpPage.value)
+    return
+  const target = Math.min(Math.max(1, Math.floor(jumpPage.value)), maxPage.value)
+  emit('jump', target)
 }
 
 watch(() => props.loading, (value) => {
@@ -174,11 +185,28 @@ onBeforeUnmount(() => {
       <span class="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
         第 {{ currentPage }} 页
       </span>
+      <span class="text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap">
+        / {{ maxPage }} 页
+      </span>
       <div class="h-4 w-px bg-gray-200 dark:bg-white/10" />
       <span class="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
         共 {{ total }} 个
       </span>
       <div class="h-4 w-px bg-gray-200 dark:bg-white/10" />
+      <div class="flex items-center gap-2">
+        <n-input-number
+          v-model:value="jumpPage"
+          size="tiny"
+          :min="1"
+          :max="maxPage"
+          :disabled="loading"
+          class="w-20"
+          placeholder="页码"
+        />
+        <n-button size="tiny" secondary :disabled="loading" @click="handleJump">
+          跳转
+        </n-button>
+      </div>
       <n-button
         v-if="hasMore"
         size="tiny"
