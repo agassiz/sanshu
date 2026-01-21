@@ -182,7 +182,7 @@ watch(activeElementKey, () => {
 }, { immediate: true })
 
 watch(() => [activeState.value?.color, activeState.value?.applyColor], ([color, apply]) => {
-  if (apply && color)
+  if (apply && color && typeof color === 'string')
     pushRecentColor(color)
 })
 
@@ -595,8 +595,8 @@ function buildEditedSvgPair(svg: string, state: IconEditorState, focusKey: strin
     let previewSvg = finalSvg
 
     // 仅在预览中标记选中线条
-    if (focusNode) {
-      focusNode.setAttribute('data-editor-focus', 'true')
+    if (focusNode !== null) {
+      (focusNode as Element).setAttribute('data-editor-focus', 'true')
       previewSvg = serializer.serializeToString(svgEl)
     }
 
@@ -1117,7 +1117,7 @@ async function handleCancel() {
         </transition>
 
         <div class="h-full flex flex-col gap-4">
-          <div class="flex-1 min-w-0 icon-popup-scope">
+          <div class="flex-1 min-w-0 min-h-0 overflow-hidden icon-popup-scope">
             <IconWorkshop
               mode="popup"
               :active="true"
@@ -1184,152 +1184,88 @@ async function handleCancel() {
         class="editor-floating pointer-events-auto"
         :class="showProgressOverlay ? 'pointer-events-none opacity-60' : ''"
       >
-        <div class="relative h-full rounded-2xl border border-border bg-surface-variant shadow-xl flex flex-col overflow-hidden">
-          <div class="flex items-center justify-between px-4 py-3 border-b border-border bg-surface">
-            <div class="flex items-center gap-2 cursor-move select-none" @pointerdown.prevent="startDrag">
-              <div class="i-carbon-draggable text-lg text-on-surface-secondary" />
-              <span class="font-medium">SVG 编辑器</span>
+        <div class="relative h-full rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#1f1f23] shadow-2xl flex flex-col overflow-hidden">
+          <!-- 标题栏 -->
+          <div class="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-white/5 bg-gray-50 dark:bg-[#252529] cursor-move" @pointerdown.prevent="startDrag">
+            <div class="flex items-center gap-2 select-none">
+              <div class="i-carbon-color-palette text-lg text-indigo-500" />
+              <span class="font-semibold text-gray-700 dark:text-gray-200">SVG 编辑器</span>
             </div>
-            <n-button size="small" tertiary @click="closeEditorModal">
-              关闭
+            <n-button size="small" quaternary circle @click="closeEditorModal">
+              <template #icon><div class="i-carbon-close" /></template>
             </n-button>
           </div>
 
-          <div class="flex-1 overflow-y-auto p-4 space-y-4">
+          <!-- 主内容区 -->
+          <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4 space-y-5">
+            <!-- 图标选择 -->
             <div class="space-y-2">
-              <div class="text-xs text-on-surface-secondary">
-                当前选中
-              </div>
+              <label class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">当前图标</label>
               <n-select
                 v-model:value="activeIconId"
                 size="small"
                 :options="selectedIcons.map(icon => ({ label: icon.name, value: icon.id }))"
                 placeholder="请选择图标"
                 :disabled="!selectedIcons.length"
+                virtual-scroll
               />
             </div>
 
-            <div class="rounded-xl border border-border bg-surface p-4">
-              <div class="text-xs text-on-surface-secondary mb-2">
-                实时预览
-              </div>
-              <div class="editor-preview aspect-square w-full max-w-80 rounded-xl bg-gray-900 flex items-center justify-center mx-auto overflow-hidden">
-                <n-skeleton v-if="editorStatus === 'loading'" text :repeat="4" class="w-full" />
-                <div v-else-if="editorStatus === 'error'" class="text-xs text-red-500">
+            <!-- 预览区域 -->
+            <div class="rounded-xl border border-gray-100 dark:border-white/5 bg-gray-50 dark:bg-[#121214] p-4">
+              <label class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3 block">实时预览</label>
+              <div class="editor-preview aspect-square w-full max-w-64 rounded-xl bg-gray-900 dark:bg-black flex items-center justify-center mx-auto overflow-hidden relative">
+                <!-- 网格背景 -->
+                <div class="absolute inset-0 pattern-grid opacity-10 pointer-events-none" />
+                <!-- 内容 -->
+                <n-skeleton v-if="editorStatus === 'loading'" text :repeat="3" class="w-full" />
+                <div v-else-if="editorStatus === 'error'" class="text-xs text-red-400">
                   SVG 加载失败
                 </div>
-                <div v-else-if="editorPreviewSvg" class="w-full h-full p-4" v-html="editorPreviewSvg" />
-                <div v-else class="text-xs text-gray-400">
+                <div v-else-if="editorPreviewSvg" class="w-full h-full p-6 relative z-10" v-html="editorPreviewSvg" />
+                <div v-else class="text-xs text-gray-500">
                   请选择图标进行编辑
                 </div>
               </div>
-            </div>
-
-            <div class="space-y-2">
-              <div class="text-xs text-on-surface-secondary">
-                线条元素
-              </div>
-              <n-select
-                v-model:value="activeElementKey"
-                size="small"
-                :options="activeElementOptions.map(item => ({ label: item.label, value: item.key }))"
-                placeholder="选择线条元素"
-                :disabled="!activeElementOptions.length"
-              />
-              <div v-if="!activeElementOptions.length" class="text-xs text-on-surface-secondary">
-                暂无可编辑线条
+              <div class="text-center text-xs text-gray-400 mt-2">
+                {{ activeIcon?.name || '未选择' }}
               </div>
             </div>
 
-            <div class="space-y-3">
+            <!-- 颜色设置卡片 -->
+            <div class="rounded-xl border border-gray-100 dark:border-white/5 bg-gray-50 dark:bg-[#18181b] p-4 space-y-4">
               <div class="flex items-center justify-between">
-                <span class="text-sm font-medium">线条样式</span>
-                <n-switch
-                  :value="activeElementStyle?.enabled ?? false"
-                  size="small"
-                  :disabled="!activeElementStyle"
-                  @update:value="value => updateActiveElementStyle('enabled', value)"
-                />
-              </div>
-              <div class="text-xs text-on-surface-secondary">
-                启用后仅作用于当前线条
-              </div>
-              <n-color-picker
-                :value="activeElementStyle?.strokeColor ?? '#8B8B8B'"
-                :swatches="paletteColors"
-                size="small"
-                :disabled="!activeElementStyle?.enabled"
-                @update:value="value => value && updateActiveElementStyle('strokeColor', value)"
-              />
-              <n-input-number
-                :value="activeElementStyle?.strokeWidth ?? null"
-                size="small"
-                :min="0"
-                :max="24"
-                :disabled="!activeElementStyle?.enabled"
-                @update:value="value => updateActiveElementStyle('strokeWidth', value)"
-              >
-                <template #prefix>
-                  线条粗细
-                </template>
-              </n-input-number>
-              <div class="flex items-center justify-between">
-                <span class="text-xs text-on-surface-secondary">线条圆角</span>
-                <n-switch
-                  :value="activeElementStyle?.roundStroke ?? false"
-                  size="small"
-                  :disabled="!activeElementStyle?.enabled"
-                  @update:value="value => updateActiveElementStyle('roundStroke', value)"
-                />
-              </div>
-              <div class="flex justify-end">
-                <n-button size="tiny" quaternary :disabled="!activeElementStyle" @click="resetActiveElementStyle">
-                  重置线条
-                </n-button>
-              </div>
-            </div>
-
-            <div class="space-y-3">
-              <div class="flex items-center justify-between">
-                <span class="text-sm font-medium">颜色</span>
+                <label class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">全局颜色</label>
                 <n-switch
                   :value="activeState?.applyColor ?? false"
                   size="small"
                   :disabled="!activeState"
-                  @update:value="value => updateActiveState('applyColor', value)"
+                  @update:value="(value: boolean) => updateActiveState('applyColor', value)"
                 />
               </div>
               <n-color-picker
                 :value="activeState?.color"
                 :swatches="paletteColors"
                 size="small"
-                :disabled="!activeState"
-                @update:value="value => value && updateActiveState('color', value)"
+                :disabled="!activeState?.applyColor"
+                @update:value="(value: string) => value && updateActiveState('color', value)"
               />
-              <div class="text-xs text-on-surface-secondary">
-                最近颜色
-              </div>
-              <div class="flex flex-wrap gap-2">
-                <n-button
-                  v-for="color in recentColors"
+              <!-- 最近颜色 -->
+              <div v-if="recentColors.length" class="flex flex-wrap gap-1.5">
+                <div 
+                  v-for="color in recentColors.slice(0, 8)" 
                   :key="color"
-                  size="tiny"
-                  quaternary
-                  :disabled="!activeState"
+                  class="w-5 h-5 rounded cursor-pointer border border-gray-200 dark:border-white/10 hover:scale-110 transition-transform shadow-sm"
+                  :style="{ backgroundColor: color }"
                   @click="updateActiveState('color', color)"
-                >
-                  {{ color }}
-                </n-button>
-                <div v-if="!recentColors.length" class="text-xs text-on-surface-secondary">
-                  暂无
-                </div>
+                />
               </div>
             </div>
 
-            <div class="space-y-3">
-              <div class="text-sm font-medium">
-                尺寸
-              </div>
+            <!-- 尺寸与变换卡片 -->
+            <div class="rounded-xl border border-gray-100 dark:border-white/5 bg-gray-50 dark:bg-[#18181b] p-4 space-y-4">
+              <label class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">尺寸与变换</label>
+              
               <div class="grid grid-cols-2 gap-2">
                 <n-input-number
                   :value="activeState?.width"
@@ -1337,11 +1273,9 @@ async function handleCancel() {
                   :min="8"
                   :max="512"
                   :disabled="!activeState"
-                  @update:value="value => value !== null && updateActiveState('width', value)"
+                  @update:value="(value: number | null) => value !== null && updateActiveState('width', value)"
                 >
-                  <template #prefix>
-                    W
-                  </template>
+                  <template #prefix><span class="text-xs text-gray-400">W</span></template>
                 </n-input-number>
                 <n-input-number
                   :value="activeState?.height"
@@ -1349,145 +1283,190 @@ async function handleCancel() {
                   :min="8"
                   :max="512"
                   :disabled="!activeState"
-                  @update:value="value => value !== null && updateActiveState('height', value)"
+                  @update:value="(value: number | null) => value !== null && updateActiveState('height', value)"
                 >
-                  <template #prefix>
-                    H
-                  </template>
+                  <template #prefix><span class="text-xs text-gray-400">H</span></template>
                 </n-input-number>
               </div>
-              <div class="flex flex-wrap gap-2">
-                <n-button
-                  v-for="size in sizePresets"
-                  :key="size"
-                  size="tiny"
-                  quaternary
-                  :disabled="!activeState"
+              
+              <!-- 尺寸预设 -->
+              <div class="flex flex-wrap gap-1">
+                <n-tag 
+                  v-for="size in sizePresets" 
+                  :key="size" 
+                  checkable 
+                  size="small"
+                  class="cursor-pointer"
+                  :checked="activeState?.width === size"
                   @click="applySizePreset(size)"
                 >
                   {{ size }}
-                </n-button>
+                </n-tag>
               </div>
-            </div>
 
-            <div class="space-y-3">
-              <div class="text-sm font-medium">
-                变换
-              </div>
+              <!-- 旋转 -->
               <n-input-number
                 :value="activeState?.rotate"
                 size="small"
                 :min="-180"
                 :max="180"
                 :disabled="!activeState"
-                @update:value="value => value !== null && updateActiveState('rotate', value)"
+                @update:value="(value: number | null) => value !== null && updateActiveState('rotate', value)"
               >
-                <template #prefix>
-                  旋转
-                </template>
+                <template #prefix><span class="text-xs text-gray-400">旋转</span></template>
+                <template #suffix><span class="text-xs text-gray-400">°</span></template>
               </n-input-number>
+
+              <!-- 翻转按钮 -->
               <div class="flex gap-2">
                 <n-button
+                  class="flex-1"
                   size="small"
                   :type="activeState?.flipX ? 'primary' : 'default'"
                   :disabled="!activeState"
                   @click="toggleActiveState('flipX')"
                 >
-                  <template #icon>
-                    <div class="i-carbon-flip-horizontal" />
-                  </template>
-                  水平翻转
+                  <template #icon><div class="i-carbon-flip-horizontal" /></template>
+                  水平
                 </n-button>
                 <n-button
+                  class="flex-1"
                   size="small"
                   :type="activeState?.flipY ? 'primary' : 'default'"
                   :disabled="!activeState"
                   @click="toggleActiveState('flipY')"
                 >
-                  <template #icon>
-                    <div class="i-carbon-flip-vertical" />
-                  </template>
-                  垂直翻转
+                  <template #icon><div class="i-carbon-flip-vertical" /></template>
+                  垂直
                 </n-button>
               </div>
             </div>
 
-            <div class="space-y-3">
-              <div class="text-sm font-medium">
-                形状微调
-              </div>
+            <!-- 线条微调卡片 -->
+            <div class="rounded-xl border border-gray-100 dark:border-white/5 bg-gray-50 dark:bg-[#18181b] p-4 space-y-4">
+              <label class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">线条微调</label>
+              
               <div class="flex items-center justify-between">
-                <span class="text-xs text-on-surface-secondary">线条圆角</span>
+                <span class="text-xs text-gray-500 dark:text-gray-400">圆角端点</span>
                 <n-switch
                   :value="activeState?.roundStroke ?? false"
                   size="small"
                   :disabled="!activeState"
-                  @update:value="value => updateActiveState('roundStroke', value)"
+                  @update:value="(value: boolean) => updateActiveState('roundStroke', value)"
                 />
               </div>
+              
               <n-input-number
                 :value="activeState?.strokeWidth"
                 size="small"
                 :min="0"
                 :max="24"
                 :disabled="!activeState"
-                @update:value="value => updateActiveState('strokeWidth', value)"
+                @update:value="(value: number | null) => updateActiveState('strokeWidth', value)"
               >
-                <template #prefix>
-                  线条粗细
-                </template>
+                <template #prefix><span class="text-xs text-gray-400">粗细</span></template>
               </n-input-number>
+              
               <n-input-number
                 :value="activeState?.rectRadius"
                 size="small"
                 :min="0"
                 :max="32"
                 :disabled="!activeState"
-                @update:value="value => updateActiveState('rectRadius', value)"
+                @update:value="(value: number | null) => updateActiveState('rectRadius', value)"
               >
-                <template #prefix>
-                  矩形圆角
-                </template>
+                <template #prefix><span class="text-xs text-gray-400">圆角</span></template>
               </n-input-number>
             </div>
 
-            <div class="space-y-3">
-              <div class="text-sm font-medium">
-                编辑器保存
+            <!-- 元素级编辑卡片 -->
+            <div class="rounded-xl border border-gray-100 dark:border-white/5 bg-gray-50 dark:bg-[#18181b] p-4 space-y-4">
+              <label class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">元素级编辑</label>
+              
+              <n-select
+                v-model:value="activeElementKey"
+                size="small"
+                :options="activeElementOptions.map(item => ({ label: item.label, value: item.key }))"
+                placeholder="选择线条元素"
+                :disabled="!activeElementOptions.length"
+                virtual-scroll
+              />
+
+              <div v-if="activeElementStyle" class="p-3 bg-white dark:bg-[#121214] rounded-lg border border-gray-100 dark:border-white/5 space-y-3">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-medium text-gray-600 dark:text-gray-300">独立样式</span>
+                  <n-switch 
+                    :value="activeElementStyle.enabled" 
+                    size="small" 
+                    @update:value="(value: boolean) => updateActiveElementStyle('enabled', value)" 
+                  />
+                </div>
+                
+                <template v-if="activeElementStyle.enabled">
+                  <n-color-picker 
+                    :value="activeElementStyle.strokeColor" 
+                    size="small"
+                    :swatches="paletteColors"
+                    @update:value="(value: string) => value && updateActiveElementStyle('strokeColor', value)"
+                  />
+                  <n-input-number 
+                    :value="activeElementStyle.strokeWidth" 
+                    size="small" 
+                    :min="0" :step="0.5"
+                    @update:value="(value: number | null) => updateActiveElementStyle('strokeWidth', value)"
+                  >
+                    <template #prefix><span class="text-xs">粗细</span></template>
+                  </n-input-number>
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs text-gray-500">圆角</span>
+                    <n-switch 
+                      :value="activeElementStyle.roundStroke" 
+                      size="small" 
+                      @update:value="(value: boolean) => updateActiveElementStyle('roundStroke', value)" 
+                    />
+                  </div>
+                </template>
               </div>
-              <div class="flex gap-2">
-                <n-input
-                  v-model:value="editorSavePath"
-                  size="small"
-                  placeholder="保存目录"
-                >
-                  <template #prefix>
-                    <div class="i-carbon-folder" />
-                  </template>
-                </n-input>
-                <n-button size="small" secondary @click="selectEditorDirectory">
-                  选择
-                </n-button>
-              </div>
-              <div class="flex flex-wrap gap-2">
-                <n-button size="small" quaternary :disabled="!editorPreviewSvg" @click="copyEditedSvg">
-                  复制 SVG
-                </n-button>
-                <n-button size="small" quaternary :disabled="!activeState" @click="resetActiveEditor">
-                  重置编辑
-                </n-button>
-                <n-button type="primary" size="small" :disabled="!activeIcon" @click="saveEditedIcon">
-                  保存此 SVG
-                </n-button>
+              <div v-else-if="!activeElementOptions.length" class="text-xs text-gray-400 text-center py-2">
+                此图标无可编辑元素
               </div>
             </div>
           </div>
 
+          <!-- 底部操作栏 -->
+          <div class="flex-shrink-0 p-4 border-t border-gray-200 dark:border-white/5 bg-gray-50 dark:bg-[#252529] space-y-3">
+            <div class="flex gap-2">
+              <n-input
+                v-model:value="editorSavePath"
+                size="small"
+                placeholder="保存目录"
+                class="flex-1"
+              >
+                <template #prefix><div class="i-carbon-folder text-gray-400" /></template>
+              </n-input>
+              <n-button size="small" secondary @click="selectEditorDirectory">...</n-button>
+            </div>
+            
+            <div class="grid grid-cols-3 gap-2">
+              <n-button size="small" secondary :disabled="!editorPreviewSvg" @click="copyEditedSvg">
+                <template #icon><div class="i-carbon-copy" /></template>
+                复制
+              </n-button>
+              <n-button size="small" secondary :disabled="!activeState" @click="resetActiveEditor">
+                复原
+              </n-button>
+              <n-button size="small" type="primary" :disabled="!activeIcon" @click="saveEditedIcon">
+                保存
+              </n-button>
+            </div>
+          </div>
+
+          <!-- 缩放手柄 -->
           <div
-            class="absolute bottom-2 right-2 h-5 w-5 cursor-se-resize text-on-surface-secondary/70"
+            class="absolute bottom-1 right-1 w-4 h-4 cursor-nwse-resize z-20"
             @pointerdown.prevent="startResize"
           >
-            <div class="h-full w-full border-r border-b border-on-surface-secondary/40 rotate-45" />
+            <div class="absolute bottom-0 right-0 w-2 h-2 border-r-2 border-b-2 border-gray-300 dark:border-gray-600 rounded-br-sm" />
           </div>
         </div>
       </div>
@@ -1506,40 +1485,66 @@ async function handleCancel() {
 
 /* 弹窗模式下放大图标预览与网格 - 大尺寸预览优化 */
 .icon-popup-scope :deep(.icon-grid) {
-  grid-template-columns: repeat(auto-fill, minmax(clamp(180px, 22vw, 280px), 1fr));
-  gap: clamp(12px, 2vw, 20px);
+  grid-template-columns: repeat(auto-fill, minmax(clamp(100px, 12vw, 140px), 1fr));
+  gap: clamp(8px, 1.5vw, 12px);
 }
 
 .icon-popup-scope :deep(.icon-card) {
-  padding: clamp(16px, 2.5vw, 28px);
+  padding: clamp(8px, 1.5vw, 12px);
+  aspect-ratio: 1;
 }
 
 .icon-popup-scope :deep(.icon-preview) {
-  width: clamp(120px, 15vw, 200px);
-  height: clamp(120px, 15vw, 200px);
+  width: clamp(48px, 8vw, 64px);
+  height: clamp(48px, 8vw, 64px);
 }
 
 .icon-popup-scope :deep(.font-icon) {
-  font-size: clamp(80px, 12vw, 160px);
+  font-size: clamp(32px, 6vw, 48px);
 }
 
 .icon-popup-scope :deep(.skeleton-icon) {
-  width: clamp(120px, 15vw, 200px);
-  height: clamp(120px, 15vw, 200px);
+  width: clamp(48px, 8vw, 64px);
+  height: clamp(48px, 8vw, 64px);
 }
 
 .icon-popup-scope :deep(.icon-name) {
-  font-size: clamp(12px, 1.2vw, 14px);
-  margin-top: 8px;
+  font-size: clamp(10px, 1vw, 12px);
+  margin-top: 4px;
 }
 
 /* 编辑器预览放大与选中高亮 */
 .editor-preview :deep(svg) {
   width: 100%;
   height: 100%;
+  max-width: 100%;
+  max-height: 100%;
 }
 
 .editor-preview :deep([data-editor-focus='true']) {
   filter: drop-shadow(0 0 6px rgba(126, 156, 180, 0.6));
+}
+
+/* 网格背景图案 */
+.pattern-grid {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+/* 自定义滚动条 */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(156, 163, 175, 0.2);
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(156, 163, 175, 0.4);
 }
 </style>

@@ -273,7 +273,7 @@ onMounted(async () => {
       >
         <div 
           v-if="showFilters" 
-          class="p-4 rounded-xl bg-slate-50 dark:bg-white/5 border border-slate-100 dark:border-white/5 flex flex-wrap gap-6 shadow-inner"
+          class="p-4 rounded-xl bg-gray-100 dark:bg-[#1f1f23] border border-gray-200 dark:border-white/10 flex flex-wrap gap-6"
         >
           <div class="flex items-center gap-3">
             <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">风格</span>
@@ -319,7 +319,7 @@ onMounted(async () => {
     </div>
 
     <!-- 操作栏 -->
-    <div v-if="hasResults || hasSelection" class="flex justify-between items-center px-2 py-2 bg-slate-50 dark:bg-white/5 rounded-lg mx-1">
+    <div v-if="hasResults || hasSelection" class="flex justify-between items-center px-3 py-2 bg-gray-100 dark:bg-[#1f1f23] rounded-lg mx-1 border border-gray-200 dark:border-white/10">
       <div class="flex items-center gap-4">
         <n-checkbox
           :checked="isAllSelected"
@@ -413,11 +413,45 @@ onMounted(async () => {
     </div>
 
     <!-- 错误提示 -->
-    <div v-if="error" class="fixed bottom-4 left-1/2 transform -translate-x-1/2 z-50">
+    <div v-if="error" class="fixed bottom-20 left-1/2 transform -translate-x-1/2 z-50">
       <n-alert type="error" closable title="出错了" class="shadow-xl">
         {{ error }}
       </n-alert>
     </div>
+
+    <!-- 悬浮分页组件 -->
+    <transition
+      enter-active-class="transition-all duration-300 ease-out"
+      enter-from-class="opacity-0 translate-y-4"
+      enter-to-class="opacity-100 translate-y-0"
+      leave-active-class="transition-all duration-200 ease-in"
+      leave-from-class="opacity-100 translate-y-0"
+      leave-to-class="opacity-0 translate-y-4"
+    >
+      <div 
+        v-if="hasResults" 
+        class="fixed bottom-4 left-1/2 transform -translate-x-1/2 z-40 flex items-center gap-3 px-4 py-2 rounded-full bg-white/90 dark:bg-[#1f1f23]/95 border border-gray-200 dark:border-white/10 shadow-xl backdrop-blur-sm"
+      >
+        <span class="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
+          第 {{ currentPage }} 页
+        </span>
+        <div class="h-4 w-px bg-gray-200 dark:bg-white/10" />
+        <span class="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
+          共 {{ total }} 个
+        </span>
+        <div class="h-4 w-px bg-gray-200 dark:bg-white/10" />
+        <n-button 
+          v-if="hasMore" 
+          size="tiny" 
+          type="primary" 
+          :loading="loading"
+          @click="handleLoadMore"
+        >
+          加载更多
+        </n-button>
+        <span v-else class="text-xs text-gray-400 dark:text-gray-500">已全部加载</span>
+      </div>
+    </transition>
 
     <!-- 保存模态框 -->
     <IconSaveModal

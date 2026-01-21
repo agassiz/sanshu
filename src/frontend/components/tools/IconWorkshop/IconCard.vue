@@ -206,6 +206,8 @@ function handleCopy(e: Event) {
   align-items: center;
   justify-content: center;
   color: var(--color-on-surface, #111827);
+  overflow: hidden; /* 防止 SVG 溢出 */
+  flex-shrink: 0;
 }
 
 :root.dark .icon-preview {
@@ -218,11 +220,15 @@ function handleCopy(e: Event) {
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
 }
 
 .svg-container :deep(svg) {
   width: 100%;
   height: 100%;
+  max-width: 40px;
+  max-height: 40px;
+  object-fit: contain;
 }
 
 .font-icon {
