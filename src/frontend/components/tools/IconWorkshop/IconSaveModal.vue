@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * 图标保存模态框组件
- * 配置保存路径和格式，执行保存操作
+ * 图标保存模态框组件 - 重构版
+ * 提供沉浸式的保存配置和预览体验
  */
 import type { IconFormat, IconItem, IconSaveRequest } from '../../../types/icon'
 import { invoke } from '@tauri-apps/api/core'
@@ -13,6 +13,7 @@ interface Props {
   icons: IconItem[]
   defaultPath?: string
 }
+
 const props = withDefaults(defineProps<Props>(), {
   defaultPath: 'assets/icons',
 })
@@ -28,12 +29,27 @@ const savePath = ref(props.defaultPath)
 const format = ref<IconFormat>('svg')
 const saving = ref(false)
 
-// 格式选项
+// 格式选项配置
 const formatOptions = [
-  { label: 'SVG 矢量格式', value: 'svg' },
-  { label: 'PNG 位图格式', value: 'png' },
-  { label: 'SVG + PNG 双格式', value: 'both' },
-]
+  { 
+    label: 'SVG 矢量', 
+    value: 'svg', 
+    desc: '保留原始矢量数据，可无限缩放',
+    icon: 'i-carbon-vector-pen'
+  },
+  { 
+    label: 'PNG 位图', 
+    value: 'png', 
+    desc: '标清位图，兼容性好',
+    icon: 'i-carbon-image'
+  },
+  { 
+    label: '双格式', 
+    value: 'both', 
+    desc: '同时保存 SVG 和 PNG 版本',
+    icon: 'i-carbon-copy-file'
+  },
+] as const
 
 // 监听默认路径变化
 watch(() => props.defaultPath, (newPath) => {
@@ -50,9 +66,14 @@ const dialogVisible = computed({
 
 const iconCount = computed(() => props.icons.length)
 
-const previewIcons = computed(() => props.icons.slice(0, 5))
-
-const hasMoreIcons = computed(() => props.icons.length > 5)
+// 清理 SVG 内容用于预览
+function processSvg(content?: string) {
+  if (!content) return null
+  return content
+    .replace(/\s*style="[^"]*"/g, '')
+    .replace(/\s*width="[^"]*"/g, ' width="100%"')
+    .replace(/\s*height="[^"]*"/g, ' height="100%"')
+}
 
 // 选择目录
 async function selectDirectory() {
@@ -71,9 +92,7 @@ async function selectDirectory() {
 
 // 执行保存
 async function handleSave() {
-  if (!savePath.value.trim()) {
-    return
-  }
+  if (!savePath.value.trim()) return
 
   saving.value = true
   try {
@@ -97,223 +116,181 @@ function handleCancel() {
 <template>
   <n-modal
     v-model:show="dialogVisible"
-    preset="card"
-    title="保存图标"
-    :style="{ width: '500px', maxWidth: '95vw' }"
-    :bordered="false"
-    size="huge"
-    class="save-modal"
+    :mask-closable="!saving"
+    :close-on-esc="!saving"
+    transform-origin="center"
+    class="custom-modal"
   >
-    <div class="save-modal-content">
-      <!-- 预览区域 -->
-      <div class="preview-section">
-        <div class="preview-label">
-          已选择 {{ iconCount }} 个图标
+    <div class="w-[800px] max-w-[95vw] bg-white dark:bg-[#1a1a1a] rounded-xl overflow-hidden shadow-2xl flex flex-col md:flex-row h-[600px] max-h-[90vh]">
+      
+      <!-- 左侧：配置面板 -->
+      <div class="w-full md:w-[320px] bg-slate-50 dark:bg-[#1f1f23] p-6 flex flex-col border-r border-gray-100 dark:border-white/5">
+        <div class="mb-6">
+          <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+            <div class="i-carbon-save text-indigo-500" />
+            保存图标
+          </h2>
+          <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">配置导出选项和目标路径</p>
         </div>
-        <div class="preview-icons">
-          <div
-            v-for="icon in previewIcons"
-            :key="icon.id"
-            class="preview-icon"
-            :title="icon.name"
-          >
-            <div
-              v-if="icon.svgContent"
-              class="svg-preview"
-              v-html="icon.svgContent"
-            />
-            <div v-else class="i-carbon-image opacity-30" />
-          </div>
-          <div v-if="hasMoreIcons" class="preview-more">
-            +{{ icons.length - 5 }}
-          </div>
-        </div>
-      </div>
 
-      <!-- 保存路径 -->
-      <div class="form-group">
-        <label class="form-label">保存路径</label>
-        <div class="path-input">
-          <n-input
-            v-model:value="savePath"
-            placeholder="输入保存目录路径"
-            size="large"
-          >
-            <template #prefix>
-              <div class="i-carbon-folder opacity-50" />
-            </template>
-          </n-input>
+        <div class="flex-1 flex flex-col gap-6 overflow-y-auto pr-2">
+          <!-- 路径选择 -->
+          <div class="flex flex-col gap-2">
+            <label class="text-xs font-semibold uppercase tracking-wider text-slate-400">保存路径</label>
+            <div class="flex gap-2">
+              <n-input
+                v-model:value="savePath"
+                placeholder="选择目录..."
+                size="medium"
+                class="flex-1"
+              >
+                <template #prefix>
+                  <div class="i-carbon-folder text-slate-400" />
+                </template>
+              </n-input>
+              <n-button secondary type="primary" class="!px-3" @click="selectDirectory">
+                <div class="i-carbon-folder-open text-lg" />
+              </n-button>
+            </div>
+          </div>
+
+          <!-- 格式选择卡片 -->
+          <div class="flex flex-col gap-3">
+            <label class="text-xs font-semibold uppercase tracking-wider text-slate-400">导出格式</label>
+            <div class="flex flex-col gap-2">
+              <div
+                v-for="opt in formatOptions"
+                :key="opt.value"
+                class="relative px-4 py-3 rounded-lg border-2 cursor-pointer transition-all duration-200 group flex items-center gap-3"
+                :class="[
+                  format === opt.value 
+                    ? 'border-indigo-500 bg-indigo-50/50 dark:bg-indigo-500/10' 
+                    : 'border-transparent bg-white dark:bg-white/5 hover:border-slate-200 dark:hover:border-white/10'
+                ]"
+                @click="format = opt.value as IconFormat"
+              >
+                <!-- 选中标记 -->
+                <div v-if="format === opt.value" class="absolute right-2 top-2 text-indigo-500">
+                  <div class="i-carbon-checkmark-filled text-lg" />
+                </div>
+
+                <div 
+                  class="w-10 h-10 rounded-full flex items-center justify-center text-xl transition-colors"
+                  :class="format === opt.value ? 'bg-indigo-100 text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400' : 'bg-slate-100 text-slate-400 dark:bg-white/10'"
+                >
+                  <div :class="opt.icon" />
+                </div>
+                
+                <div class="flex-1">
+                  <div class="font-medium text-slate-700 dark:text-slate-200" :class="{ 'text-indigo-600 dark:text-indigo-400': format === opt.value }">
+                    {{ opt.label }}
+                  </div>
+                  <div class="text-xs text-slate-400 leading-tight mt-0.5">{{ opt.desc }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 底部按钮 -->
+        <div class="mt-6 pt-4 border-t border-gray-100 dark:border-white/5 flex flex-col gap-3">
           <n-button
             type="primary"
-            secondary
             size="large"
-            @click="selectDirectory"
+            block
+            :loading="saving"
+            :disabled="!savePath.trim()"
+            class="!h-12 !text-base !font-medium shadow-lg shadow-indigo-500/20"
+            @click="handleSave"
           >
             <template #icon>
-              <div class="i-carbon-folder-open" />
+              <div class="i-carbon-download" />
             </template>
-            选择
+            确认保存 ({{ iconCount }})
+          </n-button>
+          
+          <n-button quaternary block @click="handleCancel" class="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
+            取消
           </n-button>
         </div>
       </div>
 
-      <!-- 保存格式 -->
-      <div class="form-group">
-        <label class="form-label">保存格式</label>
-        <n-radio-group v-model:value="format" size="medium">
-          <n-space>
-            <n-radio
-              v-for="opt in formatOptions"
-              :key="opt.value"
-              :value="opt.value"
+      <!-- 右侧：预览面板 -->
+      <div class="flex-1 bg-slate-100/50 dark:bg-[#121214] flex flex-col relative overflow-hidden">
+        <!-- 装饰背景 -->
+        <div class="absolute inset-0 pointer-events-none opacity-30 dark:opacity-10">
+          <div class="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl transform translate-x-1/2 -translate-y-1/2" />
+          <div class="absolute bottom-0 left-0 w-48 h-48 bg-blue-500/10 rounded-full blur-3xl transform -translate-x-1/2 translate-y-1/2" />
+        </div>
+
+        <div class="p-6 pb-2 relative z-10 flex justify-between items-end border-b border-gray-100/50 dark:border-white/5">
+          <div>
+            <h3 class="text-lg font-semibold text-slate-700 dark:text-slate-200">预览清单</h3>
+            <p class="text-sm text-slate-400">即将保存以下 {{ iconCount }} 个图标</p>
+          </div>
+          <div class="text-xs font-mono text-indigo-500 bg-indigo-50 dark:bg-indigo-500/10 px-2 py-1 rounded">
+            SVG Render
+          </div>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-6 relative z-10 custom-scrollbar">
+          <div class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-4 gap-4">
+            <div
+              v-for="icon in icons"
+              :key="icon.id"
+              class="group relative aspect-square rounded-xl bg-white dark:bg-[#1a1a1a] border border-gray-100 dark:border-white/5 shadow-sm hover:shadow-md hover:border-indigo-500/30 transition-all duration-300 flex flex-col items-center justify-center p-4"
             >
-              {{ opt.label }}
-            </n-radio>
-          </n-space>
-        </n-radio-group>
-      </div>
+              <!-- 图标 -->
+              <div class="flex-1 w-full flex items-center justify-center text-slate-700 dark:text-slate-200 group-hover:text-indigo-500 transition-colors">
+                 <div
+                    v-if="icon.svgContent"
+                    class="w-8 h-8 md:w-10 md:h-10 transition-transform duration-300 group-hover:scale-110"
+                    v-html="processSvg(icon.svgContent)"
+                  />
+                  <div v-else class="i-carbon-image text-4xl opacity-20" />
+              </div>
+              
+              <!-- 名称 -->
+              <div class="w-full text-center mt-3">
+                <div class="text-xs text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300 truncate transition-colors font-medium">
+                  {{ icon.name }}
+                </div>
+              </div>
 
-      <!-- 提示信息 -->
-      <n-alert type="info" :bordered="false" class="mt-4">
-        <template #icon>
-          <div class="i-carbon-information" />
-        </template>
-        图标将保存到指定目录，文件名使用图标名称。
-      </n-alert>
+              <!-- 悬停时的角标 -->
+              <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div class="w-2 h-2 rounded-full bg-indigo-500 shadow-sm" />
+              </div>
+            </div>
+          </div>
+          
+          <!-- 空状态修正 -->
+          <div v-if="icons.length === 0" class="h-full flex flex-col items-center justify-center text-slate-300 dark:text-slate-600">
+            <div class="i-carbon-select-window text-6xl mb-4" />
+            <p>未选择图标</p>
+          </div>
+        </div>
+        
+        <!-- 底部渐变遮罩 -->
+        <div class="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-slate-100 dark:from-[#121214] to-transparent pointer-events-none z-20" />
+      </div>
     </div>
-
-    <!-- 底部操作 -->
-    <template #footer>
-      <div class="modal-footer">
-        <n-button quaternary @click="handleCancel">
-          取消
-        </n-button>
-        <n-button
-          type="primary"
-          :loading="saving"
-          :disabled="!savePath.trim()"
-          @click="handleSave"
-        >
-          <template #icon>
-            <div class="i-carbon-download" />
-          </template>
-          保存 {{ iconCount }} 个图标
-        </n-button>
-      </div>
-    </template>
   </n-modal>
 </template>
 
 <style scoped>
-.save-modal-content {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+/* 自定义滚动条 */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
 }
-
-/* 预览区域 */
-.preview-section {
-  padding: 16px;
-  border-radius: 12px;
-  background: var(--color-container, rgba(128, 128, 128, 0.05));
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
 }
-
-:root.dark .preview-section {
-  background: rgba(255, 255, 255, 0.03);
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(156, 163, 175, 0.2);
+  border-radius: 3px;
 }
-
-.preview-label {
-  font-size: 13px;
-  color: var(--color-on-surface-secondary, #6b7280);
-  margin-bottom: 12px;
-}
-
-:root.dark .preview-label {
-  color: #9ca3af;
-}
-
-.preview-icons {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.preview-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--color-container, rgba(255, 255, 255, 0.8));
-  border: 1px solid var(--color-border, rgba(128, 128, 128, 0.2));
-  overflow: hidden;
-}
-
-:root.dark .preview-icon {
-  background: rgba(24, 24, 28, 0.9);
-  border-color: rgba(255, 255, 255, 0.08);
-}
-
-.svg-preview {
-  width: 24px;
-  height: 24px;
-}
-
-.svg-preview :deep(svg) {
-  width: 100%;
-  height: 100%;
-}
-
-.preview-more {
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--color-on-surface-secondary, #6b7280);
-  background: var(--color-container, rgba(128, 128, 128, 0.1));
-}
-
-:root.dark .preview-more {
-  color: #9ca3af;
-  background: rgba(255, 255, 255, 0.05);
-}
-
-/* 表单组 */
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.form-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-on-surface, #111827);
-}
-
-:root.dark .form-label {
-  color: #e5e7eb;
-}
-
-.path-input {
-  display: flex;
-  gap: 8px;
-}
-
-.path-input .n-input {
-  flex: 1;
-}
-
-/* 底部操作 */
-.modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(156, 163, 175, 0.4);
 }
 </style>

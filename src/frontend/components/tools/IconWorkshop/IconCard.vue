@@ -3,8 +3,8 @@
  * 图标卡片组件
  * 展示单个图标，支持选择、复制操作
  */
-import type { IconItem } from '../../../types/icon'
-import { computed, ref } from 'vue'
+import { computed, ref } from 'vue';
+import type { IconItem } from '../../../types/icon';
 
 // Props
 interface Props {
@@ -19,6 +19,8 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<{
   toggle: []
   copy: []
+  dblclick: []
+  contextmenu: [event: MouseEvent]
 }>()
 
 // 悬停状态
@@ -36,15 +38,29 @@ const svgContent = computed(() => {
   if (!props.icon.svgContent)
     return null
 
-  // 移除可能的尺寸限制，让 SVG 自适应
+  // 移除尺寸限制，让 SVG 自适应父容器
+  // 1. 移除 style 属性（解决 width: 1em 问题）
+  // 2. 将 width/height 属性设为 100%
   return props.icon.svgContent
-    .replace(/width="[^"]*"/g, 'width="100%"')
-    .replace(/height="[^"]*"/g, 'height="100%"')
+    .replace(/\s*style="[^"]*"/g, '')
+    .replace(/\s*width="[^"]*"/g, ' width="100%"')
+    .replace(/\s*height="[^"]*"/g, ' height="100%"')
 })
 
 // 点击卡片切换选择
 function handleClick() {
   emit('toggle')
+}
+
+// 双击打开编辑器
+function handleDblClick() {
+  emit('dblclick')
+}
+
+// 右键菜单
+function handleContextMenu(e: MouseEvent) {
+  e.preventDefault()
+  emit('contextmenu', e)
 }
 
 // 复制图标
@@ -62,6 +78,8 @@ function handleCopy(e: Event) {
       'icon-card--hovered': isHovered,
     }"
     @click="handleClick"
+    @dblclick="handleDblClick"
+    @contextmenu="handleContextMenu"
     @mouseenter="isHovered = true"
     @mouseleave="isHovered = false"
   >

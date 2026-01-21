@@ -149,10 +149,12 @@ async fn save_single_icon(
     // 生成安全的文件名
     let safe_name = sanitize_filename(&icon.name);
     
-    // 保存 SVG
+    // 保存 SVG（清洗后）
     if *format == IconFormat::Svg || *format == IconFormat::Both {
         let svg_path = save_dir.join(format!("{}.svg", safe_name));
-        fs::write(&svg_path, &svg_content)
+        // 清洗 SVG：移除 Iconfont 添加的内联样式限制
+        let cleaned_svg = clean_svg_for_save(&svg_content);
+        fs::write(&svg_path, &cleaned_svg)
             .map_err(|e| format!("写入 SVG 文件失败: {}", e))?;
         saved_paths.push(svg_path.to_string_lossy().to_string());
     }
@@ -222,6 +224,38 @@ fn sanitize_filename(name: &str) -> String {
     }
     
     safe_name
+}
+
+/// 清洗 SVG 内容，移除限制尺寸的内联样式
+/// 
+/// Iconfont API 返回的 SVG 通常包含 `style="width: 1em; height: 1em; ..."`
+/// 这会导致图标在使用时被强制限制为很小的尺寸
+/// 此函数移除这些限制，保留 viewBox 以便用户自由控制尺寸
+fn clean_svg_for_save(svg: &str) -> String {
+    use regex::Regex;
+    
+    let mut result = svg.to_string();
+    
+    // 移除 class 属性（通常是 class="icon"）
+    if let Ok(re) = Regex::new(r#"\s*class\s*=\s*"[^"]*""#) {
+        result = re.replace_all(&result, "").to_string();
+    }
+    
+    // 移除整个 style 属性（包含 width/height 限制）
+    // 模式匹配: style="..." 或 style='...'
+    if let Ok(re) = Regex::new(r#"\s*style\s*=\s*"[^"]*""#) {
+        result = re.replace_all(&result, "").to_string();
+    }
+    if let Ok(re) = Regex::new(r#"\s*style\s*=\s*'[^']*'"#) {
+        result = re.replace_all(&result, "").to_string();
+    }
+    
+    // 清理多余空格
+    if let Ok(re) = Regex::new(r#"<svg\s+"#) {
+        result = re.replace_all(&result, "<svg ").to_string();
+    }
+    
+    result
 }
 
 // ============ 缓存管理命令 ============
@@ -318,10 +352,13 @@ pub async fn copy_icon_to_clipboard(
         .await
         .map_err(|e| format!("获取图标内容失败: {}", e))?;
     
+    // 清洗 SVG：移除 Iconfont 添加的内联样式限制
+    let cleaned_svg = clean_svg_for_save(&svg_content);
+    
     // 复制到剪贴板
     app_handle
         .clipboard()
-        .write_text(&svg_content)
+        .write_text(&cleaned_svg)
         .map_err(|e| format!("复制到剪贴板失败: {}", e))?;
     
     log_debug!("图标已复制到剪贴板");

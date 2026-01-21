@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import type { IconItem, IconSaveItem, IconSaveRequest, IconSaveResult } from '../../../types/icon'
 import { invoke } from '@tauri-apps/api/core'
 import { useMessage } from 'naive-ui'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useIconSearch } from '../../../composables/useIconSearch'
+import type { IconItem, IconSaveItem, IconSaveRequest, IconSaveResult } from '../../../types/icon'
 import IconWorkshop from './IconWorkshop.vue'
 
 interface Props {
@@ -88,6 +88,11 @@ const elementDefaultStyles = ref<Record<number, Record<string, SvgElementStyle>>
 // ============ 编辑器弹窗状态 ============
 const editorModalOpen = ref(false)
 const editorModalRef = ref<HTMLElement | null>(null)
+
+// ============ 右键菜单状态 ============
+const contextMenuVisible = ref(false)
+const contextMenuPosition = ref({ x: 0, y: 0 })
+const contextMenuIcon = ref<IconItem | null>(null)
 const editorRect = ref({ x: 0, y: 0, width: 0, height: 0 })
 const editorRectInitialized = ref(false)
 const dragState = ref<{
@@ -206,6 +211,64 @@ onBeforeUnmount(() => {
 
 function handleSelectionChange(icons: IconItem[]) {
   selectedIcons.value = icons
+}
+
+// ============ 双击与右键菜单处理 ============
+
+// 双击图标：选中并打开编辑器
+function handleIconDblClick(icon: IconItem) {
+  // 确保图标被选中
+  if (!selectedIcons.value.some(i => i.id === icon.id)) {
+    selectedIcons.value = [...selectedIcons.value, icon]
+  }
+  // 设置为当前活动图标
+  activeIconId.value = icon.id
+  // 打开编辑器
+  openEditorModal()
+}
+
+// 右键图标：显示上下文菜单
+function handleIconContextMenu(icon: IconItem, event: MouseEvent) {
+  contextMenuIcon.value = icon
+  contextMenuPosition.value = { x: event.clientX, y: event.clientY }
+  contextMenuVisible.value = true
+}
+
+// 关闭右键菜单
+function closeContextMenu() {
+  contextMenuVisible.value = false
+  contextMenuIcon.value = null
+}
+
+// 右键菜单：打开编辑器
+function contextMenuOpenEditor() {
+  if (!contextMenuIcon.value)
+    return
+  handleIconDblClick(contextMenuIcon.value)
+  closeContextMenu()
+}
+
+// 右键菜单：复制SVG
+async function contextMenuCopySvg() {
+  if (!contextMenuIcon.value)
+    return
+  const icon = contextMenuIcon.value
+  try {
+    // 获取编辑后的SVG或原始SVG
+    const svgContent = getEditedSvg(icon) || icon.svgContent
+    if (svgContent) {
+      await navigator.clipboard.writeText(svgContent)
+      message.success(`已复制 ${icon.name} 的 SVG`)
+    }
+    else {
+      message.warning('暂无可复制的 SVG 内容')
+    }
+  }
+  catch (error) {
+    console.error('复制失败:', error)
+    message.error('复制失败')
+  }
+  closeContextMenu()
 }
 
 function schedulePreviewUpdate() {
@@ -1065,11 +1128,54 @@ async function handleCancel() {
               :external-save="true"
               @save="handlePopupSave"
               @selection-change="handleSelectionChange"
+              @icon-dblclick="handleIconDblClick"
+              @icon-contextmenu="handleIconContextMenu"
             />
           </div>
         </div>
       </div>
     </div>
+
+    <!-- 右键上下文菜单 -->
+    <Teleport to="body">
+      <transition
+        enter-active-class="transition duration-100 ease-out"
+        enter-from-class="opacity-0 scale-95"
+        enter-to-class="opacity-100 scale-100"
+        leave-active-class="transition duration-75 ease-in"
+        leave-from-class="opacity-100 scale-100"
+        leave-to-class="opacity-0 scale-95"
+      >
+        <div
+          v-if="contextMenuVisible"
+          class="fixed z-50 min-w-40 rounded-lg border border-border bg-surface-variant shadow-xl py-1"
+          :style="{ left: `${contextMenuPosition.x}px`, top: `${contextMenuPosition.y}px` }"
+          @click.stop
+        >
+          <div
+            class="px-3 py-2 text-sm cursor-pointer hover:bg-surface-100 flex items-center gap-2"
+            @click="contextMenuOpenEditor"
+          >
+            <div class="i-carbon-color-palette text-base" />
+            <span>打开 SVG 编辑器</span>
+          </div>
+          <div
+            class="px-3 py-2 text-sm cursor-pointer hover:bg-surface-100 flex items-center gap-2"
+            @click="contextMenuCopySvg"
+          >
+            <div class="i-carbon-copy text-base" />
+            <span>复制 SVG</span>
+          </div>
+        </div>
+      </transition>
+      <!-- 点击遮罩关闭菜单 -->
+      <div
+        v-if="contextMenuVisible"
+        class="fixed inset-0 z-40"
+        @click="closeContextMenu"
+        @contextmenu.prevent="closeContextMenu"
+      />
+    </Teleport>
 
     <!-- SVG 编辑器弹窗 -->
     <div v-if="editorModalOpen" class="fixed inset-0 z-40 pointer-events-none">
@@ -1107,13 +1213,13 @@ async function handleCancel() {
               <div class="text-xs text-on-surface-secondary mb-2">
                 实时预览
               </div>
-              <div class="editor-preview aspect-square w-full max-w-64 rounded-xl bg-surface-100 flex items-center justify-center mx-auto overflow-hidden">
+              <div class="editor-preview aspect-square w-full max-w-80 rounded-xl bg-gray-900 flex items-center justify-center mx-auto overflow-hidden">
                 <n-skeleton v-if="editorStatus === 'loading'" text :repeat="4" class="w-full" />
                 <div v-else-if="editorStatus === 'error'" class="text-xs text-red-500">
                   SVG 加载失败
                 </div>
-                <div v-else-if="editorPreviewSvg" class="w-full h-full" v-html="editorPreviewSvg" />
-                <div v-else class="text-xs text-on-surface-secondary">
+                <div v-else-if="editorPreviewSvg" class="w-full h-full p-4" v-html="editorPreviewSvg" />
+                <div v-else class="text-xs text-gray-400">
                   请选择图标进行编辑
                 </div>
               </div>
@@ -1398,28 +1504,33 @@ async function handleCancel() {
   will-change: transform, width, height;
 }
 
-/* 弹窗模式下放大图标预览与网格 */
+/* 弹窗模式下放大图标预览与网格 - 大尺寸预览优化 */
 .icon-popup-scope :deep(.icon-grid) {
-  grid-template-columns: repeat(auto-fill, minmax(clamp(120px, 18vw, 180px), 1fr));
-  gap: clamp(10px, 1.6vw, 16px);
+  grid-template-columns: repeat(auto-fill, minmax(clamp(180px, 22vw, 280px), 1fr));
+  gap: clamp(12px, 2vw, 20px);
 }
 
 .icon-popup-scope :deep(.icon-card) {
-  padding: clamp(12px, 1.8vw, 18px);
+  padding: clamp(16px, 2.5vw, 28px);
 }
 
 .icon-popup-scope :deep(.icon-preview) {
-  width: clamp(52px, 7vw, 110px);
-  height: clamp(52px, 7vw, 110px);
+  width: clamp(120px, 15vw, 200px);
+  height: clamp(120px, 15vw, 200px);
 }
 
 .icon-popup-scope :deep(.font-icon) {
-  font-size: clamp(36px, 6vw, 96px);
+  font-size: clamp(80px, 12vw, 160px);
 }
 
 .icon-popup-scope :deep(.skeleton-icon) {
-  width: clamp(52px, 7vw, 110px);
-  height: clamp(52px, 7vw, 110px);
+  width: clamp(120px, 15vw, 200px);
+  height: clamp(120px, 15vw, 200px);
+}
+
+.icon-popup-scope :deep(.icon-name) {
+  font-size: clamp(12px, 1.2vw, 14px);
+  margin-top: 8px;
 }
 
 /* 编辑器预览放大与选中高亮 */

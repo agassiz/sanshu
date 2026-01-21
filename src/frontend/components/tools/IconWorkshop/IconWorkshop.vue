@@ -3,13 +3,14 @@
  * 图标工坊 - 主组件
  * 提供图标搜索、预览、复制和保存功能
  */
-import type { IconItem, IconSaveRequest } from '../../../types/icon'
 import { invoke } from '@tauri-apps/api/core'
 import { useMessage } from 'naive-ui'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useIconSearch } from '../../../composables/useIconSearch'
+import type { IconItem, IconSaveRequest } from '../../../types/icon'
 import { DEFAULT_FILTER_OPTIONS } from '../../../types/icon'
 import IconCard from './IconCard.vue'
+import IconCardSkeleton from './IconCardSkeleton.vue'
 import IconSaveModal from './IconSaveModal.vue'
 
 interface Props {
@@ -39,6 +40,10 @@ const emit = defineEmits<{
   save: [request: IconSaveRequest]
   // 选中图标变化通知（用于弹窗模式的编辑器）
   'selection-change': [icons: IconItem[]]
+  // 双击图标打开编辑器
+  'icon-dblclick': [icon: IconItem]
+  // 右键图标打开上下文菜单
+  'icon-contextmenu': [icon: IconItem, event: MouseEvent]
 }>()
 
 // 消息提示
@@ -122,6 +127,16 @@ async function handleCopy(icon: IconItem) {
   }
 }
 
+// 双击图标 - 转发给父组件
+function handleIconDblClick(icon: IconItem) {
+  emit('icon-dblclick', icon)
+}
+
+// 右键图标 - 转发给父组件
+function handleIconContextMenu(icon: IconItem, event: MouseEvent) {
+  emit('icon-contextmenu', icon, event)
+}
+
 // 打开保存模态框
 function openSaveModal() {
   if (!hasSelection.value) {
@@ -200,26 +215,30 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="icon-workshop">
+  <div class="h-full flex flex-col gap-4 bg-white dark:bg-[#121214] overflow-hidden">
     <!-- 搜索区域 -->
-    <div class="search-section">
+    <div class="flex flex-col gap-3 px-1 pt-1">
       <!-- 搜索栏 -->
-      <div class="search-bar">
-        <n-input
-          v-model:value="searchInput"
-          placeholder="输入关键词搜索图标..."
-          size="large"
-          clearable
-          class="search-input"
-          @keydown="handleKeydown"
-        >
-          <template #prefix>
-            <div class="i-carbon-search text-lg opacity-50" />
-          </template>
-        </n-input>
+      <div class="flex items-center gap-2">
+        <div class="flex-1 relative group">
+          <n-input
+            v-model:value="searchInput"
+            placeholder="输入关键词搜索图标..."
+            size="large"
+            clearable
+            class="!rounded-xl shadow-sm group-hover:shadow-md transition-shadow"
+            @keydown="handleKeydown"
+          >
+            <template #prefix>
+              <div class="i-carbon-search text-lg text-slate-400" />
+            </template>
+          </n-input>
+        </div>
+        
         <n-button
           type="primary"
           size="large"
+          class="!rounded-xl !px-6 shadow-indigo-500/20 shadow-lg"
           :loading="loading"
           @click="handleSearch"
         >
@@ -228,9 +247,11 @@ onMounted(async () => {
           </template>
           搜索
         </n-button>
+        
         <n-button
           quaternary
           size="large"
+          class="!rounded-xl"
           :type="showFilters ? 'primary' : 'default'"
           @click="showFilters = !showFilters"
         >
@@ -242,22 +263,34 @@ onMounted(async () => {
       </div>
 
       <!-- 筛选面板 -->
-      <transition name="slide-down">
-        <div v-if="showFilters" class="filter-panel">
-          <div class="filter-group">
-            <span class="filter-label">风格</span>
+      <transition
+        enter-active-class="transition-all duration-300 ease-out"
+        enter-from-class="opacity-0 -translate-y-2 scale-95"
+        enter-to-class="opacity-100 translate-y-0 scale-100"
+        leave-active-class="transition-all duration-200 ease-in"
+        leave-from-class="opacity-100 translate-y-0 scale-100"
+        leave-to-class="opacity-0 -translate-y-2 scale-95"
+      >
+        <div 
+          v-if="showFilters" 
+          class="p-4 rounded-xl bg-slate-50 dark:bg-white/5 border border-slate-100 dark:border-white/5 flex flex-wrap gap-6 shadow-inner"
+        >
+          <div class="flex items-center gap-3">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">风格</span>
             <n-radio-group v-model:value="searchParams.style" size="small">
               <n-radio-button
                 v-for="opt in DEFAULT_FILTER_OPTIONS.styles"
                 :key="opt.value"
                 :value="opt.value"
+                class="!rounded-md"
               >
                 {{ opt.label }}
               </n-radio-button>
             </n-radio-group>
           </div>
-          <div class="filter-group">
-            <span class="filter-label">填充</span>
+          
+          <div class="flex items-center gap-3">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">填充</span>
             <n-radio-group v-model:value="searchParams.fills" size="small">
               <n-radio-button
                 v-for="opt in DEFAULT_FILTER_OPTIONS.fills"
@@ -268,8 +301,9 @@ onMounted(async () => {
               </n-radio-button>
             </n-radio-group>
           </div>
-          <div class="filter-group">
-            <span class="filter-label">排序</span>
+          
+          <div class="flex items-center gap-3">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">排序</span>
             <n-radio-group v-model:value="searchParams.sortType" size="small">
               <n-radio-button
                 v-for="opt in DEFAULT_FILTER_OPTIONS.sortTypes"
@@ -285,32 +319,40 @@ onMounted(async () => {
     </div>
 
     <!-- 操作栏 -->
-    <div v-if="hasResults" class="action-bar">
-      <div class="action-left">
+    <div v-if="hasResults || hasSelection" class="flex justify-between items-center px-2 py-2 bg-slate-50 dark:bg-white/5 rounded-lg mx-1">
+      <div class="flex items-center gap-4">
         <n-checkbox
           :checked="isAllSelected"
           :indeterminate="hasSelection && !isAllSelected"
+          class="ml-2"
           @update:checked="toggleSelectAll"
         >
           全选
         </n-checkbox>
-        <span class="result-count">
-          共 {{ total }} 个结果，当前第 {{ currentPage }} 页
+        <div class="h-4 w-px bg-slate-200 dark:bg-white/10" />
+        <span class="text-xs text-slate-500 dark:text-slate-400">
+          共 {{ total }} 个结果 · 第 {{ currentPage }} 页
         </span>
       </div>
-      <div class="action-right">
-        <n-button
-          v-if="hasSelection"
-          size="small"
-          quaternary
-          @click="clearSelection"
-        >
-          清空选择 ({{ selectedCount }})
-        </n-button>
+      
+      <div class="flex items-center gap-3">
+        <transition name="fade">
+          <n-button
+            v-if="hasSelection"
+            size="small"
+            quaternary
+            type="error"
+            @click="clearSelection"
+          >
+            清空 ({{ selectedCount }})
+          </n-button>
+        </transition>
+        
         <n-button
           type="primary"
           size="small"
           :disabled="!hasSelection"
+          class="shadow-sm"
           @click="openSaveModal"
         >
           <template #icon>
@@ -321,18 +363,15 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- 图标网格 -->
-    <div class="icon-grid-container">
-      <!-- 加载骨架屏 -->
-      <div v-if="loading && !hasResults" class="icon-grid">
-        <div v-for="i in 20" :key="i" class="icon-skeleton">
-          <div class="skeleton-icon" />
-          <div class="skeleton-name" />
-        </div>
+    <!-- 滚动容器 -->
+    <div class="flex-1 overflow-y-auto min-h-0 pr-2 custom-scrollbar relative">
+      <!-- 骨架屏 Loading -->
+      <div v-if="loading && !hasMore" class="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8 gap-3">
+        <IconCardSkeleton v-for="i in 32" :key="i" />
       </div>
 
-      <!-- 图标网格 -->
-      <div v-else-if="hasResults" class="icon-grid">
+      <!-- 结果网格 -->
+      <div v-else-if="hasResults" class="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8 gap-3 content-start">
         <IconCard
           v-for="icon in icons"
           :key="icon.id"
@@ -340,49 +379,45 @@ onMounted(async () => {
           :selected="selectedIds.has(icon.id)"
           @toggle="toggleSelect(icon.id)"
           @copy="handleCopy(icon)"
+          @dblclick="handleIconDblClick(icon)"
+          @contextmenu="handleIconContextMenu(icon, $event)"
         />
+        
+        <!-- 加载更多骨架 -->
+        <template v-if="loading && hasMore">
+           <IconCardSkeleton v-for="i in 16" :key="`more-${i}`" />
+        </template>
       </div>
 
       <!-- 空状态 - 无搜索结果 -->
-      <div v-else-if="isEmpty" class="empty-state">
-        <div class="i-carbon-search-locate text-5xl opacity-20 mb-4" />
-        <p class="text-sm opacity-60">
-          未找到相关图标，请尝试其他关键词
-        </p>
+      <div v-else-if="isEmpty" class="h-full flex flex-col items-center justify-center text-slate-400">
+        <div class="w-24 h-24 rounded-full bg-slate-50 dark:bg-white/5 flex items-center justify-center mb-4">
+          <div class="i-carbon-search-locate text-4xl opacity-50" />
+        </div>
+        <p class="text-sm">未找到相关图标，请尝试其他关键词</p>
       </div>
 
-      <!-- 空状态 - 未搜索 -->
-      <div v-else-if="showEmptyState" class="empty-state">
-        <div class="i-carbon-image text-6xl opacity-15 mb-4" />
-        <p class="text-base opacity-60 mb-2">
-          搜索 Iconfont 图标库
-        </p>
-        <p class="text-sm opacity-40">
-          输入关键词开始搜索图标
-        </p>
+      <!-- 空状态 - 初始 -->
+      <div v-else-if="showEmptyState" class="h-full flex flex-col items-center justify-center text-slate-300 dark:text-slate-600">
+        <div class="i-carbon-image text-8xl opacity-10 mb-6" />
+        <p class="text-lg font-medium opacity-80 mb-2">搜索 Iconfont 图标库</p>
+        <p class="text-sm opacity-50">输入关键词开始探索无限创意</p>
       </div>
-    </div>
-
-    <!-- 加载更多 -->
-    <div v-if="hasMore" class="load-more">
-      <n-button
-        :loading="loading"
-        quaternary
-        @click="handleLoadMore"
-      >
-        加载更多
-      </n-button>
+      
+      <!-- 加载更多按钮 (非自动加载场景) -->
+      <div v-if="hasMore && !loading" class="flex justify-center py-6">
+        <n-button secondary size="large" @click="handleLoadMore">
+          加载更多
+        </n-button>
+      </div>
     </div>
 
     <!-- 错误提示 -->
-    <n-alert
-      v-if="error"
-      type="error"
-      closable
-      class="mt-4"
-    >
-      {{ error }}
-    </n-alert>
+    <div v-if="error" class="fixed bottom-4 left-1/2 transform -translate-x-1/2 z-50">
+      <n-alert type="error" closable title="出错了" class="shadow-xl">
+        {{ error }}
+      </n-alert>
+    </div>
 
     <!-- 保存模态框 -->
     <IconSaveModal
@@ -395,171 +430,28 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.icon-workshop {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  height: 100%;
+/* 自定义滚动条 */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(156, 163, 175, 0.2);
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(156, 163, 175, 0.4);
 }
 
-/* ========== 搜索区域 ========== */
-.search-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+/* 过渡动画 */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
 }
-
-.search-bar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.search-input {
-  flex: 1;
-}
-
-.filter-panel {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  padding: 16px;
-  border-radius: 12px;
-  background: var(--color-container, rgba(255, 255, 255, 0.8));
-  border: 1px solid var(--color-border, rgba(128, 128, 128, 0.2));
-}
-
-:root.dark .filter-panel {
-  background: rgba(24, 24, 28, 0.9);
-  border-color: rgba(255, 255, 255, 0.08);
-}
-
-.filter-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.filter-label {
-  font-size: 13px;
-  color: var(--color-on-surface-secondary, #6b7280);
-  min-width: 40px;
-}
-
-:root.dark .filter-label {
-  color: #9ca3af;
-}
-
-/* ========== 操作栏 ========== */
-.action-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--color-container, rgba(255, 255, 255, 0.6));
-}
-
-:root.dark .action-bar {
-  background: rgba(24, 24, 28, 0.6);
-}
-
-.action-left, .action-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.result-count {
-  font-size: 12px;
-  color: var(--color-on-surface-secondary, #6b7280);
-}
-
-:root.dark .result-count {
-  color: #9ca3af;
-}
-
-/* ========== 图标网格 ========== */
-.icon-grid-container {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 300px;
-}
-
-.icon-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-  gap: 12px;
-}
-
-/* ========== 骨架屏 ========== */
-.icon-skeleton {
-  aspect-ratio: 1;
-  padding: 12px;
-  border-radius: 12px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  background: var(--color-container, rgba(255, 255, 255, 0.8));
-  border: 1px solid var(--color-border, rgba(128, 128, 128, 0.2));
-}
-
-:root.dark .icon-skeleton {
-  background: rgba(24, 24, 28, 0.9);
-  border-color: rgba(255, 255, 255, 0.08);
-}
-
-.skeleton-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
-  background: linear-gradient(90deg, rgba(128,128,128,0.1) 25%, rgba(128,128,128,0.2) 50%, rgba(128,128,128,0.1) 75%);
-  background-size: 200% 100%;
-  animation: skeleton-pulse 1.5s infinite;
-}
-
-.skeleton-name {
-  width: 60%;
-  height: 10px;
-  border-radius: 4px;
-  background: linear-gradient(90deg, rgba(128,128,128,0.1) 25%, rgba(128,128,128,0.2) 50%, rgba(128,128,128,0.1) 75%);
-  background-size: 200% 100%;
-  animation: skeleton-pulse 1.5s infinite;
-}
-
-@keyframes skeleton-pulse {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
-
-/* ========== 空状态 ========== */
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 300px;
-  color: var(--color-on-surface-muted, #9ca3af);
-}
-
-/* ========== 加载更多 ========== */
-.load-more {
-  display: flex;
-  justify-content: center;
-  padding: 16px 0;
-}
-
-/* ========== 过渡动画 ========== */
-.slide-down-enter-active,
-.slide-down-leave-active {
-  transition: all 0.3s ease;
-}
-
-.slide-down-enter-from,
-.slide-down-leave-to {
+.fade-enter-from,
+.fade-leave-to {
   opacity: 0;
-  transform: translateY(-10px);
 }
 </style>
