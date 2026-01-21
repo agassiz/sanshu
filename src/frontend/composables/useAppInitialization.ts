@@ -85,15 +85,17 @@ export function useAppInitialization(mcpHandler: ReturnType<typeof import('./use
         markAsInitialized()
       }
 
-      // 自动检查版本更新并弹窗（非阻塞，图标模式下跳过）
-      if (!isIconMode) {
-        autoCheckUpdate().catch(() => {
-          // 静默处理版本检查失败
-        })
-      }
-
       // 结束初始化状态
       isInitializing.value = false
+
+      // 自动检查版本更新并弹窗（延后触发，避免阻塞首屏渲染，图标模式下跳过）
+      if (!isIconMode) {
+        setTimeout(() => {
+          autoCheckUpdate().catch(() => {
+            // 静默处理版本检查失败
+          })
+        }, 0)
+      }
 
       return { isMcp, mcpContent, isIconMode }
     }

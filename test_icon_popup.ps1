@@ -7,6 +7,9 @@ param (
     [switch]$SkipFrontend  # 跳过前端构建 (仅编译 Rust)
 )
 
+# 确保脚本在项目根目录执行，避免相对路径导致前端资源找不到
+Set-Location -Path $PSScriptRoot
+
 $ErrorActionPreference = "Stop"
 
 Write-Host "=== 启动测试流程 ($Mode) ===" -ForegroundColor Cyan
@@ -58,6 +61,9 @@ if (-not $SkipFrontend) {
 Write-Host "`n[后端编译阶段]" -ForegroundColor Cyan
 $BuildArgs = @("build")
 if ($Mode -eq "release") { $BuildArgs += "--release" }
+# 启用 custom-protocol，确保不依赖 devUrl（避免加载 localhost:5176）
+$BuildArgs += "--features"
+$BuildArgs += "custom-protocol"
 
 Write-Host "正在编译 Rust 后端 (cargo $($BuildArgs -join ' '))..."
 & cargo $BuildArgs
@@ -70,8 +76,8 @@ if ($LASTEXITCODE -ne 0) {
 # 4. 运行测试
 Write-Host "`n[测试运行阶段]" -ForegroundColor Cyan
 
-# 确定可执行文件路径
-$ExePath = "target/$Mode/等一下.exe"
+# 确定可执行文件路径（使用绝对路径，避免工作目录变更导致找不到可执行文件）
+$ExePath = Join-Path -Path $PSScriptRoot -ChildPath "target\\$Mode\\等一下.exe"
 
 if (-not (Test-Path $ExePath)) {
     Write-Host "错误: 找不到可执行文件 $ExePath" -ForegroundColor Red
@@ -80,13 +86,14 @@ if (-not (Test-Path $ExePath)) {
 
 # 测试用例 1: 基础搜索
 Write-Host "`n--> 测试 1: 基础搜索 'settings'" -ForegroundColor Yellow
-Start-Process -FilePath $ExePath -ArgumentList "--icon-search", "settings" -Wait
+# 统一设置工作目录，确保前端资源加载路径正确
+Start-Process -FilePath $ExePath -ArgumentList "--icon-search", "settings" -WorkingDirectory $PSScriptRoot -Wait
 Write-Host "测试 1 完成" -ForegroundColor Green
 
 # 测试用例 2: 指定风格 (线性) 和 关键词
 Write-Host "`n--> 测试 2: 搜索 'user'，风格 'line'" -ForegroundColor Yellow
 $Env:SANSHU_LOG = "debug" # 开启日志以便观察输出
-Start-Process -FilePath $ExePath -ArgumentList "--icon-search", "user", "--style", "line" -Wait
+Start-Process -FilePath $ExePath -ArgumentList "--icon-search", "user", "--style", "line" -WorkingDirectory $PSScriptRoot -Wait
 Write-Host "测试 2 完成" -ForegroundColor Green
 
 # 测试用例 3: 指定保存路径
@@ -95,7 +102,7 @@ Write-Host "`n--> 测试 3: 搜索 'file'，指定保存路径 './test_output'" 
 if (-not (Test-Path "./test_output")) {
     New-Item -ItemType Directory -Force -Path "./test_output" | Out-Null
 }
-Start-Process -FilePath $ExePath -ArgumentList "--icon-search", "file", "--save-path", "./test_output" -Wait
+Start-Process -FilePath $ExePath -ArgumentList "--icon-search", "file", "--save-path", "./test_output" -WorkingDirectory $PSScriptRoot -Wait
 Write-Host "测试 3 完成。请检查 ./test_output 目录。" -ForegroundColor Green
 
 Write-Host "`n=== 所有流程执行完毕 ===" -ForegroundColor Cyan
