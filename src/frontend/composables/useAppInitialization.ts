@@ -46,8 +46,14 @@ export function useAppInitialization(mcpHandler: ReturnType<typeof import('./use
         loadFontOptions(),
       ])
 
-      // 检查是否为MCP模式
-      const { isMcp, mcpContent } = await checkMcpMode()
+      // 检查是否为MCP模式或图标模式
+      const { isMcp, mcpContent, isIconMode, iconParams } = await checkMcpMode()
+
+      // 如果是图标模式，设置状态
+      if (isIconMode && iconParams) {
+        console.log('📦 进入图标搜索弹窗模式:', iconParams)
+        mcpHandler.setIconMode(true, iconParams)
+      }
 
       // 无论是否为MCP模式，都加载窗口设置
       await settings.loadWindowSettings()
@@ -67,8 +73,8 @@ export function useAppInitialization(mcpHandler: ReturnType<typeof import('./use
         }
       }
 
-      // 初始化MCP工具配置（在非MCP模式下）
-      if (!isMcp) {
+      // 初始化MCP工具配置（在非MCP模式和非图标模式下）
+      if (!isMcp && !isIconMode) {
         await initMcpTools()
         await setupMcpEventListener()
       }
@@ -79,15 +85,17 @@ export function useAppInitialization(mcpHandler: ReturnType<typeof import('./use
         markAsInitialized()
       }
 
-      // 自动检查版本更新并弹窗（非阻塞）
-      autoCheckUpdate().catch(() => {
-        // 静默处理版本检查失败
-      })
+      // 自动检查版本更新并弹窗（非阻塞，图标模式下跳过）
+      if (!isIconMode) {
+        autoCheckUpdate().catch(() => {
+          // 静默处理版本检查失败
+        })
+      }
 
       // 结束初始化状态
       isInitializing.value = false
 
-      return { isMcp, mcpContent }
+      return { isMcp, mcpContent, isIconMode }
     }
     catch (error) {
       console.error('应用初始化失败:', error)

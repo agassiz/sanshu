@@ -11,6 +11,7 @@ import LayoutWrapper from './layout/LayoutWrapper.vue'
 import McpIndexStatusDrawer from './popup/McpIndexStatusDrawer.vue'
 import McpPopup from './popup/McpPopup.vue'
 import PopupHeader from './popup/PopupHeader.vue'
+import IconPopupMode from './tools/IconWorkshop/IconPopupMode.vue'
 
 interface AppConfig {
   theme: string
@@ -35,6 +36,13 @@ interface Props {
   showMcpPopup: boolean
   appConfig: AppConfig
   isInitializing: boolean
+  isIconMode?: boolean
+  iconParams?: {
+    query: string
+    style: string
+    savePath: string
+    projectRoot: string
+  } | null
 }
 
 interface Emits {
@@ -161,9 +169,18 @@ onUnmounted(() => {
 
 <template>
   <div class="min-h-screen bg-black">
+    <!-- 图标搜索弹窗模式 -->
+    <IconPopupMode
+      v-if="props.isIconMode && props.iconParams"
+      :initial-query="props.iconParams.query"
+      :initial-style="props.iconParams.style"
+      :initial-save-path="props.iconParams.savePath"
+      :project-root="props.iconParams.projectRoot"
+    />
+
     <!-- MCP弹窗模式 -->
     <div
-      v-if="props.showMcpPopup && props.mcpRequest"
+      v-else-if="props.showMcpPopup && props.mcpRequest"
       class="flex flex-col w-full h-screen bg-black text-white select-none"
     >
       <!-- 头部 - 固定在顶部 -->

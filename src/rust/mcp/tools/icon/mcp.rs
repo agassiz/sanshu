@@ -1,71 +1,101 @@
 // MCP 工具定义
-// 定义图标工坊作为 MCP 工具的元数据（可选：如果需要通过 MCP 协议暴露）
+// 定义图标工坊作为 MCP 工具的元数据
 
-use rmcp::model::Tool;
+use rmcp::model::{Tool, CallToolResult, ErrorData as McpError};
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use crate::mcp::types::TuRequest;
+use crate::mcp::handlers::create_icon_popup;
+
 /// 图标工坊 MCP 工具
 /// 
-/// 注意：图标搜索功能主要通过 Tauri 命令供前端调用，
-/// 此 MCP 工具定义是可选的，用于支持 AI 助手直接调用
+/// 提供交互式图标选择功能，通过弹窗让用户搜索、预览、选择并保存图标
 pub struct IconTool;
 
 impl IconTool {
-    /// 获取工具定义
+    /// 获取 "tu" 工具定义（交互式图标选择）
     /// 
-    /// 返回 MCP 协议规范的工具定义，可用于 AI 助手调用
+    /// 返回 MCP 协议规范的工具定义
     pub fn get_tool_definition() -> Tool {
         let schema = serde_json::json!({
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "搜索关键词（必填），用于在 Iconfont 图标库中搜索图标"
+                    "description": "预设的搜索关键词（可选，用户可在界面中修改）"
                 },
                 "style": {
                     "type": "string",
                     "enum": ["line", "fill", "flat", "all"],
-                    "description": "图标风格：line(线性)、fill(面性)、flat(扁平)、all(全部)，默认 all"
+                    "description": "预设的图标风格：line(线性)、fill(面性)、flat(扁平)、all(全部)"
                 },
-                "fills": {
+                "save_path": {
                     "type": "string",
-                    "enum": ["single", "multi", "all"],
-                    "description": "填充类型：single(单色)、multi(多色)、all(全部)，默认 all"
+                    "description": "建议的保存路径（相对于项目根目录，如 assets/icons）"
                 },
-                "sort_type": {
+                "project_root": {
                     "type": "string",
-                    "enum": ["relate", "new", "hot"],
-                    "description": "排序方式：relate(相关度)、new(最新)、hot(最热)，默认 relate"
-                },
-                "page": {
-                    "type": "integer",
-                    "description": "页码，默认 1"
-                },
-                "page_size": {
-                    "type": "integer",
-                    "description": "每页数量，默认 50，最大 100"
+                    "description": "项目根目录路径（用于计算相对路径）"
                 }
-            },
-            "required": ["query"]
+            }
         });
 
         if let serde_json::Value::Object(schema_map) = schema {
             Tool {
-                name: Cow::Borrowed("search_icons"),
+                name: Cow::Borrowed("tu"),
                 description: Some(Cow::Borrowed(
-                    "搜索 Iconfont 图标库中的图标。输入关键词后返回匹配的图标列表，支持按风格、填充类型和排序方式筛选。"
+                    "交互式图标选择工具。打开可视化界面让用户搜索、预览、选择并保存 Iconfont 图标。支持筛选风格、分页浏览和批量保存。"
                 )),
                 input_schema: Arc::new(schema_map),
                 annotations: None,
                 icons: None,
                 meta: None,
                 output_schema: None,
-                title: Some("图标搜索".to_string()),
+                title: Some("图标工坊".to_string()),
             }
         } else {
-            // 不应该到达这里
             panic!("无法创建 IconTool schema")
+        }
+    }
+
+    /// 执行 "tu" 工具 - 打开交互式图标选择弹窗
+    /// 
+    /// 调用 GUI 进程，让用户在可视化界面中选择和保存图标
+    pub async fn tu(request: TuRequest) -> Result<CallToolResult, McpError> {
+        match create_icon_popup(&request) {
+            Ok(response) => {
+                if response.cancelled {
+                    Ok(CallToolResult::success(vec![
+                        rmcp::model::Content::text("用户取消了图标选择操作")
+                    ]))
+                } else if response.saved_count == 0 {
+                    Ok(CallToolResult::success(vec![
+                        rmcp::model::Content::text("用户未选择任何图标")
+                    ]))
+                } else {
+                    // 构建详细的成功消息
+                    let message = format!(
+                        "✅ 已成功保存 {} 个图标到 {}\n\n保存的图标：\n{}",
+                        response.saved_count,
+                        response.save_path,
+                        response.saved_names
+                            .iter()
+                            .map(|name| format!("• {}", name))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    );
+                    Ok(CallToolResult::success(vec![
+                        rmcp::model::Content::text(message)
+                    ]))
+                }
+            }
+            Err(e) => {
+                Err(McpError::internal_error(
+                    format!("图标选择失败: {}", e),
+                    None
+                ))
+            }
         }
     }
 
@@ -107,3 +137,4 @@ pub struct IconToolInfo {
     /// 是否有配置项
     pub has_config: bool,
 }
+

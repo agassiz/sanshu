@@ -48,6 +48,47 @@ fn default_category() -> String {
     "context".to_string()
 }
 
+// ============ 图标工坊 MCP 请求类型 ============
+
+/// 图标工坊交互请求（"tu" 工具）
+/// 
+/// 打开可视化图标选择界面，让用户搜索、预览、选择并保存图标
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TuRequest {
+    /// 预设的搜索关键词（可选，用户可在界面中修改）
+    #[schemars(description = "预设的搜索关键词（可选）")]
+    #[serde(default)]
+    pub query: Option<String>,
+    
+    /// 预设的图标风格：line(线性) | fill(面性) | flat(扁平) | all(全部)
+    #[schemars(description = "预设的图标风格：line/fill/flat/all")]
+    #[serde(default)]
+    pub style: Option<String>,
+    
+    /// 建议的保存路径（可选，用户可修改）
+    #[schemars(description = "建议的保存路径（相对于项目根目录）")]
+    #[serde(default)]
+    pub save_path: Option<String>,
+    
+    /// 项目根目录路径（用于计算相对路径）
+    #[schemars(description = "项目根目录路径")]
+    #[serde(default)]
+    pub project_root: Option<String>,
+}
+
+/// 图标保存结果响应
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IconSaveResponse {
+    /// 保存的图标数量
+    pub saved_count: u32,
+    /// 保存路径
+    pub save_path: String,
+    /// 保存的图标名称列表
+    pub saved_names: Vec<String>,
+    /// 用户是否取消
+    pub cancelled: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PopupRequest {
     pub id: String,

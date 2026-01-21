@@ -8,8 +8,8 @@ use rmcp::{
 use rmcp::model::*;
 use std::collections::HashMap;
 
-use super::tools::{InteractionTool, MemoryTool, AcemcpTool, Context7Tool};
-use super::types::{ZhiRequest, JiyiRequest};
+use super::tools::{InteractionTool, MemoryTool, AcemcpTool, Context7Tool, IconTool};
+use super::types::{ZhiRequest, JiyiRequest, TuRequest};
 use crate::mcp::tools::context7::types::Context7Request;
 use crate::config::load_standalone_config;
 use crate::{log_important, log_debug};
@@ -174,6 +174,11 @@ impl ServerHandler for ZhiServer {
             tools.push(Context7Tool::get_tool_definition());
         }
 
+        // 图标工坊工具 - 仅在启用时添加
+        if self.is_tool_enabled("icon") {
+            tools.push(IconTool::get_tool_definition());
+        }
+
         log_debug!("返回给客户端的工具列表: {:?}", tools.iter().map(|t| &t.name).collect::<Vec<_>>());
 
         Ok(ListToolsResult {
@@ -263,6 +268,26 @@ impl ServerHandler for ZhiServer {
 
                 // 调用 Context7 工具
                 Context7Tool::query_docs(context7_request).await
+            }
+            "tu" => {
+                // 检查图标工坊工具是否启用
+                if !self.is_tool_enabled("icon") {
+                    return Err(McpError::internal_error(
+                        "图标工坊工具已被禁用".to_string(),
+                        None
+                    ));
+                }
+
+                // 解析请求参数
+                let arguments_value = request.arguments
+                    .map(serde_json::Value::Object)
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+                let tu_request: TuRequest = serde_json::from_value(arguments_value)
+                    .map_err(|e| McpError::invalid_params(format!("参数解析失败: {}", e), None))?;
+
+                // 调用图标工坊工具
+                IconTool::tu(tu_request).await
             }
             _ => {
                 Err(McpError::invalid_request(

@@ -8,6 +8,15 @@ import { ref } from 'vue'
 export function useMcpHandler() {
   const mcpRequest = ref(null)
   const showMcpPopup = ref(false)
+  
+  // 图标搜索模式状态
+  const isIconMode = ref(false)
+  const iconParams = ref<{
+    query: string
+    style: string
+    savePath: string
+    projectRoot: string
+  } | null>(null)
 
   /**
    * 统一的MCP响应处理
@@ -96,22 +105,39 @@ export function useMcpHandler() {
    */
   async function checkMcpMode() {
     try {
-      const args = await invoke('get_cli_args')
+      const args = await invoke('get_cli_args') as Record<string, any>
 
-      if (args && (args as any).mcp_request) {
+      // 检查是否为图标搜索模式
+      if (args?.icon_mode) {
+        console.log('📦 检测到图标搜索模式')
+        return {
+          isMcp: false,
+          mcpContent: null,
+          isIconMode: true,
+          iconParams: {
+            query: args.icon_query || '',
+            style: args.icon_style || 'all',
+            savePath: args.icon_save_path || 'assets/icons',
+            projectRoot: args.icon_project_root || '',
+          },
+        }
+      }
+
+      // 检查是否为 MCP 请求模式
+      if (args?.mcp_request) {
         // 读取MCP请求文件
-        const content = await invoke('read_mcp_request', { filePath: (args as any).mcp_request })
+        const content = await invoke('read_mcp_request', { filePath: args.mcp_request })
 
         if (content) {
           await showMcpDialog(content)
         }
-        return { isMcp: true, mcpContent: content }
+        return { isMcp: true, mcpContent: content, isIconMode: false, iconParams: null }
       }
     }
     catch (error) {
       console.error('检查MCP模式失败:', error)
     }
-    return { isMcp: false, mcpContent: null }
+    return { isMcp: false, mcpContent: null, isIconMode: false, iconParams: null }
   }
 
   /**
@@ -127,14 +153,24 @@ export function useMcpHandler() {
       console.error('设置MCP事件监听器失败:', error)
     }
   }
+  /**
+   * 设置图标模式状态
+   */
+  function setIconMode(mode: boolean, params: typeof iconParams.value = null) {
+    isIconMode.value = mode
+    iconParams.value = params
+  }
 
   return {
     mcpRequest,
     showMcpPopup,
+    isIconMode,
+    iconParams,
     handleMcpResponse,
     handleMcpCancel,
     showMcpDialog,
     checkMcpMode,
     setupMcpEventListener,
+    setIconMode,
   }
 }

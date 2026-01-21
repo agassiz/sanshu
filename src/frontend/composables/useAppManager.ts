@@ -85,6 +85,10 @@ export function useAppManager() {
     showMcpPopup: mcpHandler.showMcpPopup,
     appConfig,
     isInitializing: appInit.isInitializing,
+    
+    // 图标模式状态
+    isIconMode: mcpHandler.isIconMode,
+    iconParams: mcpHandler.iconParams,
 
     // 操作
     actions,

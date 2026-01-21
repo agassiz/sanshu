@@ -126,6 +126,16 @@ pub struct McpConfig {
     pub acemcp_proxy_username: Option<String>, // 代理用户名（可选）
     pub acemcp_proxy_password: Option<String>, // 代理密码（可选）
     pub context7_api_key: Option<String>, // Context7 API密钥 (可选，免费使用时可为空)
+
+    // 图标工坊配置
+    /// 默认保存路径（相对于项目根目录，如 "assets/icons"）
+    pub icon_default_save_path: Option<String>,
+    /// 默认保存格式: "svg" | "png" | "both"
+    pub icon_default_format: Option<String>,
+    /// PNG 尺寸（像素），默认 64
+    pub icon_default_png_size: Option<u32>,
+    /// 缓存过期时间（分钟），默认 30
+    pub icon_cache_expiry_minutes: Option<u64>,
 }
 
 
@@ -302,6 +312,11 @@ pub fn default_mcp_config() -> McpConfig {
         acemcp_proxy_username: None,
         acemcp_proxy_password: None,
         context7_api_key: None,
+        // 图标工坊配置默认值
+        icon_default_save_path: None,      // 使用默认 "assets/icons"
+        icon_default_format: None,          // 默认 SVG
+        icon_default_png_size: None,        // 默认 64px
+        icon_cache_expiry_minutes: None,    // 默认 30 分钟
     }
 }
 

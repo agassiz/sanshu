@@ -70,6 +70,11 @@ zip = "7.0.0"
 tauri-plugin-clipboard-manager = "2.3.2"
 tauri-plugin-dialog = "2.4.2"
 
+# 图标工坊 - SVG 转 PNG 支持
+resvg = "0.38"
+usvg = "0.38"
+tiny-skia = "0.11"
+
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
 

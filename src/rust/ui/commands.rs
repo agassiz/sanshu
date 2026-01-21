@@ -421,6 +421,40 @@ pub fn get_cli_args() -> Result<serde_json::Value, String> {
         );
     }
 
+    // 检查是否为图标搜索模式（通过环境变量）
+    if std::env::var("SANSHU_ICON_MODE").ok().as_deref() == Some("true") {
+        result.insert(
+            "icon_mode".to_string(),
+            serde_json::Value::Bool(true),
+        );
+        
+        // 读取图标搜索相关参数
+        if let Ok(query) = std::env::var("SANSHU_ICON_QUERY") {
+            result.insert(
+                "icon_query".to_string(),
+                serde_json::Value::String(query),
+            );
+        }
+        if let Ok(style) = std::env::var("SANSHU_ICON_STYLE") {
+            result.insert(
+                "icon_style".to_string(),
+                serde_json::Value::String(style),
+            );
+        }
+        if let Ok(save_path) = std::env::var("SANSHU_ICON_SAVE_PATH") {
+            result.insert(
+                "icon_save_path".to_string(),
+                serde_json::Value::String(save_path),
+            );
+        }
+        if let Ok(project_root) = std::env::var("SANSHU_ICON_PROJECT_ROOT") {
+            result.insert(
+                "icon_project_root".to_string(),
+                serde_json::Value::String(project_root),
+            );
+        }
+    }
+
     Ok(serde_json::Value::Object(result))
 }
 

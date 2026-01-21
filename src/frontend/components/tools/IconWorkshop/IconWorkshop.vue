@@ -4,6 +4,7 @@
  * 提供图标搜索、预览、复制和保存功能
  */
 import type { IconItem, IconSaveRequest } from '../../../types/icon'
+import { invoke } from '@tauri-apps/api/core'
 import { useMessage } from 'naive-ui'
 import { computed, onMounted, ref } from 'vue'
 import { useIconSearch } from '../../../composables/useIconSearch'
@@ -11,12 +12,23 @@ import { DEFAULT_FILTER_OPTIONS } from '../../../types/icon'
 import IconCard from './IconCard.vue'
 import IconSaveModal from './IconSaveModal.vue'
 
-// Props
 interface Props {
   active?: boolean
+  // 弹窗模式相关参数
+  mode?: 'normal' | 'popup'
+  initialQuery?: string
+  initialStyle?: string
+  initialSavePath?: string
+  projectRoot?: string
 }
+
 const props = withDefaults(defineProps<Props>(), {
   active: false,
+  mode: 'normal',
+  initialQuery: '',
+  initialStyle: 'all',
+  initialSavePath: '',
+  projectRoot: '',
 })
 
 // 消息提示
@@ -59,7 +71,13 @@ const isEmpty = computed(() => !loading.value && searchInput.value && !hasResult
 const showEmptyState = computed(() => !loading.value && !searchInput.value && !hasResults.value)
 
 // 默认保存路径
-const defaultSavePath = computed(() => config.value?.defaultSavePath || 'assets/icons')
+const defaultSavePath = computed(() => {
+  // 如果有初始保存路径（来自 CLI 参数），优先使用
+  if (props.initialSavePath) {
+    return props.initialSavePath
+  }
+  return config.value?.defaultSavePath || 'assets/icons'
+})
 
 // 执行搜索
 async function handleSearch() {
@@ -105,6 +123,25 @@ async function handleSave(request: IconSaveRequest) {
     message.success(`成功保存 ${result.successCount} 个图标`)
     showSaveModal.value = false
     clearSelection()
+
+    // 如果是弹窗模式，保存成功后退出应用
+    if (props.mode === 'popup') {
+      try {
+        // 构建响应数据
+        const response = {
+          saved_count: result.successCount,
+          save_path: result.savePath,
+          saved_names: result.items.filter((i: any) => i.success).map((i: any) => i.name),
+          cancelled: false,
+        }
+        
+        // 发送响应并退出
+        await invoke('send_mcp_response', { response })
+        await invoke('exit_app')
+      } catch (e) {
+        console.error('Failed to send response or exit:', e)
+      }
+    }
   }
 }
 
@@ -118,6 +155,25 @@ async function handleLoadMore() {
 // 组件挂载时加载配置
 onMounted(async () => {
   await loadConfig()
+
+  // 如果是弹窗模式，初始化参数并自动搜索
+  if (props.mode === 'popup') {
+    if (props.initialQuery) {
+      searchInput.value = props.initialQuery
+      // 这里的 searchParams 是 reactive 对象，直接赋值即可
+      searchParams.query = props.initialQuery
+      
+      if (props.initialStyle && props.initialStyle !== 'all') {
+        // 简单的类型检查，确保它是合法的样式值
+        if (['line', 'fill', 'flat', 'all'].includes(props.initialStyle)) {
+          searchParams.style = props.initialStyle as 'line' | 'fill' | 'flat' | 'all'
+        }
+      }
+      
+      // 自动执行搜索
+      await search()
+    }
+  }
 })
 </script>
 
