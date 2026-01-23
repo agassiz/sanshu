@@ -1680,50 +1680,51 @@ fn format_master_md(design_system: &DesignSystem) -> String {
 
 fn detect_page_type(context: &str, style_results: &[HashMap<String, String>]) -> String {
     let context_lower = context.to_lowercase();
-    let patterns = [
+    // 使用切片避免不同关键词数量导致的数组长度类型不一致
+    let patterns: &[(&[&str], &str)] = &[
         (
-            [
+            &[
                 "dashboard", "admin", "analytics", "data", "metrics", "stats", "monitor",
                 "overview",
             ],
             "Dashboard / Data View",
         ),
         (
-            [
+            &[
                 "checkout", "payment", "cart", "purchase", "order", "billing",
             ],
             "Checkout / Payment",
         ),
         (
-            ["settings", "profile", "account", "preferences", "config"],
+            &["settings", "profile", "account", "preferences", "config"],
             "Settings / Profile",
         ),
         (
-            ["landing", "marketing", "homepage", "hero", "home", "promo"],
+            &["landing", "marketing", "homepage", "hero", "home", "promo"],
             "Landing / Marketing",
         ),
         (
-            ["login", "signin", "signup", "register", "auth", "password"],
+            &["login", "signin", "signup", "register", "auth", "password"],
             "Authentication",
         ),
         (
-            ["pricing", "plans", "subscription", "tiers", "packages"],
+            &["pricing", "plans", "subscription", "tiers", "packages"],
             "Pricing / Plans",
         ),
         (
-            ["blog", "article", "post", "news", "content", "story"],
+            &["blog", "article", "post", "news", "content", "story"],
             "Blog / Article",
         ),
         (
-            ["product", "item", "detail", "pdp", "shop", "store"],
+            &["product", "item", "detail", "pdp", "shop", "store"],
             "Product Detail",
         ),
         (
-            ["search", "results", "browse", "filter", "catalog", "list"],
+            &["search", "results", "browse", "filter", "catalog", "list"],
             "Search Results",
         ),
         (
-            ["empty", "404", "error", "not found", "zero"],
+            &["empty", "404", "error", "not found", "zero"],
             "Empty State",
         ),
     ];
@@ -1770,7 +1771,8 @@ fn generate_intelligent_overrides(
 
     let mut layout = HashMap::new();
     let mut spacing = HashMap::new();
-    let mut typography = HashMap::new();
+    // 显式类型，避免空 HashMap 无法推断类型
+    let mut typography: HashMap<String, String> = HashMap::new();
     let mut colors = HashMap::new();
     let mut components: Vec<String> = Vec::new();
     let mut unique_components: Vec<String> = Vec::new();
