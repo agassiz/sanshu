@@ -1130,7 +1130,7 @@ fn write_index_memory_to_ji(project_root_path: &str, config: &AcemcpConfig) {
     use super::super::memory::MemoryCategory;
 
     // 创建记忆管理器
-    let manager = match MemoryManager::new(project_root_path) {
+    let mut manager = match MemoryManager::new(project_root_path) {
         Ok(m) => m,
         Err(e) => {
             log_debug!("创建记忆管理器失败（不影响索引）: {}", e);
@@ -1149,10 +1149,13 @@ fn write_index_memory_to_ji(project_root_path: &str, config: &AcemcpConfig) {
         text_exts, exclude_patterns, batch_size, max_lines
     );
 
-    // 写入记忆
+    // 写入记忆（add_memory 现在返回 Option<String>）
     match manager.add_memory(&memory_content, MemoryCategory::Context) {
-        Ok(id) => {
+        Ok(Some(id)) => {
             log_important!(info, "已将索引配置写入 ji 记忆: id={}", id);
+        }
+        Ok(None) => {
+            log_debug!("索引配置记忆已存在相似内容，未重复添加");
         }
         Err(e) => {
             log_debug!("写入 ji 记忆失败（不影响索引）: {}", e);

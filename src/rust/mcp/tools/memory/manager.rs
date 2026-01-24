@@ -90,7 +90,8 @@ impl MemoryManager {
         // 如果配置启用了启动时去重，执行去重
         if store.config.dedup_on_startup && !store.entries.is_empty() {
             let dedup = MemoryDeduplicator::new(store.config.similarity_threshold);
-            let (deduped, stats) = dedup.deduplicate(store.entries);
+            let entries = std::mem::take(&mut store.entries);
+            let (deduped, stats) = dedup.deduplicate(entries);
 
             if stats.removed_count > 0 {
                 log_debug!(
@@ -98,12 +99,12 @@ impl MemoryManager {
                     stats.removed_count,
                     stats.remaining_count
                 );
-                store.entries = deduped;
                 store.last_dedup_at = Utc::now();
             }
+            store.entries = deduped;
         }
 
-        let mut manager = Self {
+        let manager = Self {
             memory_dir,
             project_path: project_path_str,
             store,
