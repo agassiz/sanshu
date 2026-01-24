@@ -37,7 +37,7 @@ pnpm build
 
 # 构建MCP CLI工具
 echo "🔨 构建 MCP CLI 工具..."
-cargo build --release
+cargo tauri build --no-bundle
 
 # 检查构建结果
 if [[ ! -f "target/release/等一下" ]] || [[ ! -f "target/release/三术" ]]; then

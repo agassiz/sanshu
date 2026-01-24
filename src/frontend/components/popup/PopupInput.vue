@@ -49,6 +49,9 @@ const customPromptEnabled = ref(true)
 const showInsertDialog = ref(false)
 const pendingPromptContent = ref('')
 
+// 上下文追加整体开关（默认关闭）
+const contextAppendEnabled = ref(false)
+
 // 移除条件性prompt状态管理，直接使用prompt的current_state
 
 // 分离普通prompt和条件性prompt
@@ -449,6 +452,11 @@ async function handleConditionalToggle(promptId: string, value: boolean) {
 
 // 生成条件性prompt的追加内容
 function generateConditionalContent(): string {
+  // 如果整体开关关闭，不追加任何内容
+  if (!contextAppendEnabled.value) {
+    return ''
+  }
+
   const conditionalTexts: string[] = []
 
   conditionalPrompts.value.forEach((prompt) => {
@@ -816,11 +824,26 @@ defineExpose({
 
         <!-- 上下文追加区域 -->
         <div v-if="customPromptEnabled && conditionalPrompts.length > 0" class="space-y-2" data-guide="context-append">
-          <div class="text-xs text-on-surface-secondary flex items-center gap-2">
-            <div class="i-carbon-settings-adjust w-3 h-3 text-primary-500" />
-            <span>上下文追加:</span>
+          <div class="text-xs text-on-surface-secondary flex items-center gap-2 justify-between">
+            <div class="flex items-center gap-2">
+              <div class="i-carbon-settings-adjust w-3 h-3 text-primary-500" />
+              <span>上下文追加:</span>
+            </div>
+            <n-switch
+              v-model:value="contextAppendEnabled"
+              size="small"
+              @update:value="() => emitUpdate()"
+            >
+              <template #checked>
+                <span class="text-xs">开启</span>
+              </template>
+              <template #unchecked>
+                <span class="text-xs">关闭</span>
+              </template>
+            </n-switch>
           </div>
-          <div class="grid grid-cols-2 gap-2">
+
+          <div v-if="contextAppendEnabled" class="grid grid-cols-2 gap-2">
             <div
               v-for="prompt in conditionalPrompts"
               :key="prompt.id"
@@ -837,7 +860,6 @@ defineExpose({
                   {{ getConditionalDescription(prompt) }}
                 </div>
               </div>
-              <!-- 使用 n-tooltip 包裹开关，当 MCP 工具未启用时显示提示 -->
               <n-tooltip :disabled="isMcpToolEnabled(prompt.linked_mcp_tool) || !prompt.linked_mcp_tool">
                 <template #trigger>
                   <n-switch
@@ -850,6 +872,10 @@ defineExpose({
                 请先在设置中开启「{{ getMcpToolName(prompt.linked_mcp_tool) }}」MCP 工具
               </n-tooltip>
             </div>
+          </div>
+
+          <div v-else class="text-xs text-on-surface-secondary opacity-60 italic">
+            已关闭，发送时不会追加任何上下文内容
           </div>
         </div>
 
