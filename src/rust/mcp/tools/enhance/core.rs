@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 use anyhow::Result;
-use reqwest::{Client, header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue}};
+use reqwest::{Client, header::{AUTHORIZATION, CONTENT_TYPE}};
 use serde_json::json;
 use regex::Regex;
 use futures_util::StreamExt;

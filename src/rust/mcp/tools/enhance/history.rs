@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use ring::digest::{Context, SHA256};
 
 use crate::{log_debug, log_important};
 
@@ -67,15 +67,16 @@ impl ChatHistoryManager {
         self
     }
 
-    /// 计算路径哈希
+    /// 计算路径哈希（使用 ring 库）
     fn hash_path(path: &str) -> String {
         let normalized = path
             .trim()
             .to_lowercase()
             .replace('\\', "/");
-        let mut hasher = Sha256::new();
-        hasher.update(normalized.as_bytes());
-        hex::encode(&hasher.finalize()[..8]) // 取前8字节作为短哈希
+        let mut context = Context::new(&SHA256);
+        context.update(normalized.as_bytes());
+        let digest = context.finish();
+        hex::encode(&digest.as_ref()[..8]) // 取前8字节作为短哈希
     }
 
     /// 获取历史文件路径
@@ -223,7 +224,7 @@ impl ChatHistoryManager {
     pub fn to_api_format(&self, count: usize) -> Vec<super::types::ChatHistoryEntry> {
         let entries = self.get_recent(count);
         
-        entries.into_iter().enumerate().map(|(idx, entry)| {
+        entries.into_iter().map(|entry| {
             super::types::ChatHistoryEntry {
                 request_message: entry.user_input.clone(),
                 request_id: entry.id.clone(),
