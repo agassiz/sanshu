@@ -113,7 +113,17 @@ async function loadHistoryCount() {
     historyCount.value = res.length
   }
   catch (err) {
-    message.error(`加载历史失败: ${err}`)
+    // 错误分类处理，提供更友好的提示
+    const errMsg = String(err)
+    if (errMsg.includes('创建历史管理器失败')) {
+      message.error('历史管理器初始化失败，请检查项目路径是否正确')
+    }
+    else if (errMsg.includes('permission') || errMsg.includes('denied')) {
+      message.error('读取历史文件权限不足，请检查文件访问权限')
+    }
+    else {
+      message.error(`加载历史失败: ${errMsg}`)
+    }
     historyCount.value = null
   }
   finally {
@@ -133,7 +143,17 @@ async function clearHistory() {
     message.success('历史已清空')
   }
   catch (err) {
-    message.error(`清空历史失败: ${err}`)
+    // 错误分类处理，提供更友好的提示
+    const errMsg = String(err)
+    if (errMsg.includes('创建历史管理器失败')) {
+      message.error('历史管理器初始化失败，请检查项目路径是否正确')
+    }
+    else if (errMsg.includes('permission') || errMsg.includes('denied')) {
+      message.error('写入历史文件权限不足，请检查文件访问权限')
+    }
+    else {
+      message.error(`清空历史失败: ${errMsg}`)
+    }
   }
 }
 

@@ -165,7 +165,7 @@ impl ZhiHistoryManager {
         history.last_updated = Some(Utc::now());
         self.save_history(&history)?;
 
-        log_important!(info, "zhi 历史已记录: id={}, source={}", id, source);
+        log_important!(info, "[ZhiHistory] 历史已记录: id={}, source={}", id, source);
         Ok(id)
     }
 
@@ -197,7 +197,7 @@ impl ZhiHistoryManager {
             last_updated: Some(Utc::now()),
         };
         self.save_history(&history)?;
-        log_important!(info, "zhi 历史已清空: project={}", self.project_path);
+        log_important!(info, "[ZhiHistory] 历史已清空: project={}", self.project_path);
         Ok(())
     }
 }
