@@ -169,6 +169,12 @@ export default defineConfig({
     'text-warning',
     'text-error',
     'text-info',
+    // UI/UX Pro Max 工具专有颜色 (动态生成)
+    'bg-pink-100',
+    'text-pink-600',
+    'dark:text-pink-400',
+    'dark:bg-pink-900',
+    'dark:bg-pink-800',
     // 动画
     'animate-pulse',
     // 滚动条样式类

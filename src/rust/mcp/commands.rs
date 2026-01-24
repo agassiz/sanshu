@@ -86,7 +86,7 @@ pub async fn get_mcp_tools_config(state: State<'_, AppState>) -> Result<Vec<MCPT
         description: "UI/UX 设计智能检索与设计系统生成工具".to_string(),
         enabled: config.mcp_config.tools.get(mcp::TOOL_UIUX).copied().unwrap_or(true),
         can_disable: true,
-        icon: "i-carbon-pen-fountain text-lg text-pink-600 dark:text-pink-400".to_string(),
+        icon: "i-carbon-color-palette text-lg text-pink-600 dark:text-pink-400".to_string(),
         icon_bg: "bg-pink-100 dark:bg-pink-900".to_string(),
         dark_icon_bg: "dark:bg-pink-800".to_string(),
         has_config: false,
