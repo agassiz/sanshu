@@ -40,7 +40,7 @@ pub async fn get_mcp_tools_config(state: State<'_, AppState>) -> Result<Vec<MCPT
         has_config: false, // 三术工具没有配置选项
     });
     
-    // 记忆管理工具 - 始终存在，无配置选项
+    // 记忆管理工具 - 始终存在，有配置选项
     tools.push(MCPToolConfig {
         id: mcp::TOOL_JI.to_string(),
         name: "记忆管理".to_string(),
@@ -50,7 +50,7 @@ pub async fn get_mcp_tools_config(state: State<'_, AppState>) -> Result<Vec<MCPT
         icon: "i-carbon-data-base text-lg text-purple-600 dark:text-purple-400".to_string(),
         icon_bg: "bg-green-100 dark:bg-green-900".to_string(),
         dark_icon_bg: "dark:bg-green-800".to_string(),
-        has_config: false, // 记忆管理工具没有配置选项
+        has_config: true, // 记忆管理工具有配置选项
     });
     
     // 代码搜索工具 - 始终存在，有配置选项
@@ -189,3 +189,175 @@ pub async fn reset_mcp_tools_config(
 
 // 已移除 Python Web 服务相关函数，完全使用 Rust 实现
 // 如需调试配置，请直接查看本地配置文件
+
+// ============ 记忆管理相关命令 ============
+
+use crate::mcp::tools::memory::{MemoryManager, MemoryConfig};
+
+/// 记忆条目 DTO（用于前端展示）
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct MemoryEntryDto {
+    pub id: String,
+    pub content: String,
+    pub category: String,
+    pub created_at: String,
+}
+
+/// 记忆配置 DTO（用于前端交互）
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct MemoryConfigDto {
+    pub similarity_threshold: f64,
+    pub dedup_on_startup: bool,
+    pub enable_dedup: bool,
+}
+
+/// 去重结果 DTO
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct DedupResultDto {
+    pub original_count: usize,
+    pub removed_count: usize,
+    pub remaining_count: usize,
+    pub removed_ids: Vec<String>,
+}
+
+/// 记忆统计 DTO
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct MemoryStatsDto {
+    pub total: usize,
+    pub rules: usize,
+    pub preferences: usize,
+    pub patterns: usize,
+    pub contexts: usize,
+}
+
+/// 相似度预览结果 DTO
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct SimilarityPreviewDto {
+    pub is_duplicate: bool,
+    pub similarity: f64,
+    pub matched_id: Option<String>,
+    pub matched_content: Option<String>,
+    pub threshold: f64,
+}
+
+/// 获取记忆列表
+#[tauri::command]
+pub async fn get_memory_list(project_path: String) -> Result<Vec<MemoryEntryDto>, String> {
+    let manager = MemoryManager::new(&project_path)
+        .map_err(|e| format!("创建记忆管理器失败: {}", e))?;
+    
+    let memories = manager.get_all_memories();
+    let entries: Vec<MemoryEntryDto> = memories.iter().map(|m| MemoryEntryDto {
+        id: m.id.clone(),
+        content: m.content.clone(),
+        category: m.category.display_name().to_string(),
+        created_at: m.created_at.to_rfc3339(),
+    }).collect();
+    
+    Ok(entries)
+}
+
+/// 获取记忆统计
+#[tauri::command]
+pub async fn get_memory_stats(project_path: String) -> Result<MemoryStatsDto, String> {
+    let manager = MemoryManager::new(&project_path)
+        .map_err(|e| format!("创建记忆管理器失败: {}", e))?;
+    
+    let stats = manager.get_stats();
+    Ok(MemoryStatsDto {
+        total: stats.total,
+        rules: stats.rules,
+        preferences: stats.preferences,
+        patterns: stats.patterns,
+        contexts: stats.contexts,
+    })
+}
+
+/// 获取记忆配置
+#[tauri::command]
+pub async fn get_memory_config(project_path: String) -> Result<MemoryConfigDto, String> {
+    let manager = MemoryManager::new(&project_path)
+        .map_err(|e| format!("创建记忆管理器失败: {}", e))?;
+    
+    let config = manager.config();
+    Ok(MemoryConfigDto {
+        similarity_threshold: config.similarity_threshold,
+        dedup_on_startup: config.dedup_on_startup,
+        enable_dedup: config.enable_dedup,
+    })
+}
+
+/// 保存记忆配置
+#[tauri::command]
+pub async fn save_memory_config(project_path: String, config: MemoryConfigDto) -> Result<(), String> {
+    let mut manager = MemoryManager::new(&project_path)
+        .map_err(|e| format!("创建记忆管理器失败: {}", e))?;
+    
+    let new_config = MemoryConfig {
+        similarity_threshold: config.similarity_threshold.clamp(0.5, 0.95),
+        dedup_on_startup: config.dedup_on_startup,
+        enable_dedup: config.enable_dedup,
+    };
+    
+    manager.update_config(new_config)
+        .map_err(|e| format!("保存配置失败: {}", e))?;
+    
+    log::info!("记忆配置已更新: {:?}", config);
+    Ok(())
+}
+
+/// 执行去重整理
+#[tauri::command]
+pub async fn deduplicate_memories(project_path: String) -> Result<DedupResultDto, String> {
+    let mut manager = MemoryManager::new(&project_path)
+        .map_err(|e| format!("创建记忆管理器失败: {}", e))?;
+    
+    let stats = manager.deduplicate_with_stats()
+        .map_err(|e| format!("去重失败: {}", e))?;
+    
+    Ok(DedupResultDto {
+        original_count: stats.original_count,
+        removed_count: stats.removed_count,
+        remaining_count: stats.remaining_count,
+        removed_ids: stats.removed_ids,
+    })
+}
+
+/// 预览相似度
+#[tauri::command]
+pub async fn preview_similarity(project_path: String, content: String) -> Result<SimilarityPreviewDto, String> {
+    use crate::mcp::tools::memory::dedup::MemoryDeduplicator;
+    
+    let manager = MemoryManager::new(&project_path)
+        .map_err(|e| format!("创建记忆管理器失败: {}", e))?;
+    
+    let threshold = manager.config().similarity_threshold;
+    let dedup = MemoryDeduplicator::new(threshold);
+    let memories: Vec<_> = manager.get_all_memories().iter().map(|e| (*e).clone()).collect();
+    let dup_info = dedup.check_duplicate(&content, &memories);
+    
+    Ok(SimilarityPreviewDto {
+        is_duplicate: dup_info.is_duplicate,
+        similarity: dup_info.similarity,
+        matched_id: dup_info.matched_id,
+        matched_content: dup_info.matched_content,
+        threshold,
+    })
+}
+
+/// 删除记忆
+#[tauri::command]
+pub async fn delete_memory(project_path: String, memory_id: String) -> Result<String, String> {
+    let mut manager = MemoryManager::new(&project_path)
+        .map_err(|e| format!("创建记忆管理器失败: {}", e))?;
+    
+    match manager.delete_memory(&memory_id) {
+        Ok(Some(content)) => {
+            log::info!("已删除记忆: {} - {}", memory_id, content);
+            Ok(content)
+        }
+        Ok(None) => Err(format!("未找到指定 ID 的记忆: {}", memory_id)),
+        Err(e) => Err(format!("删除记忆失败: {}", e)),
+    }
+}
+

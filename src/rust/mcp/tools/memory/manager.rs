@@ -189,6 +189,45 @@ impl MemoryManager {
         Ok(stats.removed_count)
     }
 
+    /// 执行去重并返回详细统计结果
+    /// 用于前端可视化展示
+    pub fn deduplicate_with_stats(&mut self) -> Result<super::dedup::DedupResult> {
+        let dedup = MemoryDeduplicator::new(self.store.config.similarity_threshold);
+        let (deduped, stats) = dedup.deduplicate(std::mem::take(&mut self.store.entries));
+
+        self.store.entries = deduped;
+        self.store.last_dedup_at = Utc::now();
+        self.save_store()?;
+
+        log_debug!("手动去重完成: 移除 {} 条重复记忆", stats.removed_count);
+        Ok(stats)
+    }
+
+    /// 删除指定 ID 的记忆条目
+    /// 返回被删除的记忆内容（用于确认）
+    pub fn delete_memory(&mut self, memory_id: &str) -> Result<Option<String>> {
+        let original_count = self.store.entries.len();
+        let mut deleted_content = None;
+
+        self.store.entries.retain(|entry| {
+            if entry.id == memory_id {
+                deleted_content = Some(entry.content.clone());
+                false // 移除该条目
+            } else {
+                true
+            }
+        });
+
+        if self.store.entries.len() < original_count {
+            self.save_store()?;
+            log_debug!("已删除记忆: {}", memory_id);
+            Ok(deleted_content)
+        } else {
+            Ok(None) // 未找到该 ID
+        }
+    }
+
+
     /// 获取记忆统计信息
     pub fn get_stats(&self) -> MemoryStats {
         let mut stats = MemoryStats::default();

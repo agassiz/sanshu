@@ -8,6 +8,7 @@ const SouConfig = defineAsyncComponent(() => import('../tools/SouConfig.vue'))
 const Context7Config = defineAsyncComponent(() => import('../tools/Context7Config.vue'))
 const IconWorkshop = defineAsyncComponent(() => import('../tools/IconWorkshop/IconWorkshop.vue'))
 const EnhanceConfig = defineAsyncComponent(() => import('../tools/EnhanceConfig.vue'))
+const MemoryConfig = defineAsyncComponent(() => import('../tools/MemoryConfig.vue'))
 
 const props = defineProps<{
   projectRootPath?: string | null
@@ -223,6 +224,11 @@ onMounted(async () => {
           :project-root-path="props.projectRootPath"
         />
         <IconWorkshop v-else-if="currentToolId === 'icon'" :active="showToolConfigModal" />
+        <MemoryConfig
+          v-else-if="currentToolId === 'ji'"
+          :active="showToolConfigModal"
+          :project-root-path="props.projectRootPath"
+        />
         <div v-else class="empty-config">
           <div class="i-carbon-settings text-5xl mb-3 opacity-20" />
           <div class="text-sm opacity-60">

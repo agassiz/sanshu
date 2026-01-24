@@ -133,7 +133,7 @@ impl ServerHandler for ZhiServer {
                 "properties": {
                     "action": {
                         "type": "string",
-                        "description": "操作类型：记忆(添加记忆), 回忆(获取项目信息)"
+                        "description": "操作类型：记忆(添加) | 回忆(查询) | 整理(去重) | 列表(全部记忆) | 预览相似(检测相似度) | 配置(获取/更新) | 删除(移除记忆)"
                     },
                     "project_path": {
                         "type": "string",
@@ -141,11 +141,33 @@ impl ServerHandler for ZhiServer {
                     },
                     "content": {
                         "type": "string",
-                        "description": "记忆内容（记忆操作时必需）"
+                        "description": "记忆内容（记忆/预览相似操作时必需）"
                     },
                     "category": {
                         "type": "string",
                         "description": "记忆分类：rule(规范规则), preference(用户偏好), pattern(最佳实践), context(项目上下文)"
+                    },
+                    "config": {
+                        "type": "object",
+                        "description": "配置参数（配置操作时使用）",
+                        "properties": {
+                            "similarity_threshold": {
+                                "type": "number",
+                                "description": "相似度阈值 (0.5~0.95)，超过此值视为重复"
+                            },
+                            "dedup_on_startup": {
+                                "type": "boolean",
+                                "description": "启动时自动去重"
+                            },
+                            "enable_dedup": {
+                                "type": "boolean",
+                                "description": "启用去重检测"
+                            }
+                        }
+                    },
+                    "memory_id": {
+                        "type": "string",
+                        "description": "记忆ID（删除操作时必需）"
                     }
                 },
                 "required": ["action", "project_path"]

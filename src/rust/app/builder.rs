@@ -168,7 +168,16 @@ pub fn build_tauri_app() -> Builder<tauri::Wry> {
             // zhi 交互历史命令
             crate::mcp::tools::interaction::commands::add_zhi_history,
             crate::mcp::tools::interaction::commands::get_zhi_history,
-            crate::mcp::tools::interaction::commands::clear_zhi_history
+            crate::mcp::tools::interaction::commands::clear_zhi_history,
+
+            // 记忆管理命令
+            get_memory_list,
+            get_memory_stats,
+            get_memory_config,
+            save_memory_config,
+            deduplicate_memories,
+            preview_similarity,
+            delete_memory
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();

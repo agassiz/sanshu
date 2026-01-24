@@ -76,9 +76,139 @@ impl MemoryTool {
                 let info = manager.get_project_info();
                 format!("{}{}", info, index_hint)
             }
+            // === 新增: 整理 (执行去重) ===
+            "整理" => {
+                match manager.deduplicate_with_stats() {
+                    Ok(stats) => {
+                        // 返回 JSON 格式便于前端解析
+                        let json_result = serde_json::json!({
+                            "success": true,
+                            "original_count": stats.original_count,
+                            "removed_count": stats.removed_count,
+                            "remaining_count": stats.remaining_count,
+                            "removed_ids": stats.removed_ids
+                        });
+                        format!("✅ 去重整理完成\n{}", serde_json::to_string_pretty(&json_result).unwrap_or_default())
+                    }
+                    Err(e) => {
+                        return Err(McpError::internal_error(format!("去重整理失败: {}", e), None));
+                    }
+                }
+            }
+            // === 新增: 列表 (获取全部记忆) ===
+            "列表" => {
+                let memories = manager.get_all_memories();
+                let entries: Vec<serde_json::Value> = memories.iter().map(|m| {
+                    serde_json::json!({
+                        "id": m.id,
+                        "content": m.content,
+                        "category": m.category.display_name(),
+                        "created_at": m.created_at.to_rfc3339()
+                    })
+                }).collect();
+                
+                let stats = manager.get_stats();
+                let json_result = serde_json::json!({
+                    "total": stats.total,
+                    "by_category": {
+                        "规范": stats.rules,
+                        "偏好": stats.preferences,
+                        "模式": stats.patterns,
+                        "背景": stats.contexts
+                    },
+                    "entries": entries
+                });
+                serde_json::to_string_pretty(&json_result).unwrap_or_else(|_| "[]".to_string())
+            }
+            // === 新增: 预览相似 (检测相似度) ===
+            "预览相似" => {
+                if request.content.trim().is_empty() {
+                    return Err(McpError::invalid_params("缺少待检测内容".to_string(), None));
+                }
+                
+                let dedup = super::dedup::MemoryDeduplicator::new(manager.config().similarity_threshold);
+                let dup_info = dedup.check_duplicate(&request.content, &manager.get_all_memories().iter().map(|e| (*e).clone()).collect::<Vec<_>>());
+                
+                let json_result = serde_json::json!({
+                    "is_duplicate": dup_info.is_duplicate,
+                    "similarity": format!("{:.1}%", dup_info.similarity * 100.0),
+                    "similarity_value": dup_info.similarity,
+                    "threshold": manager.config().similarity_threshold,
+                    "matched_id": dup_info.matched_id,
+                    "matched_content": dup_info.matched_content
+                });
+                
+                if dup_info.is_duplicate {
+                    format!("⚠️ 检测到相似内容 (相似度: {:.1}%)\n{}", 
+                        dup_info.similarity * 100.0,
+                        serde_json::to_string_pretty(&json_result).unwrap_or_default())
+                } else {
+                    format!("✅ 未检测到相似内容 (最高相似度: {:.1}%)\n{}", 
+                        dup_info.similarity * 100.0,
+                        serde_json::to_string_pretty(&json_result).unwrap_or_default())
+                }
+            }
+            // === 新增: 配置 (获取/更新配置) ===
+            "配置" => {
+                // 如果提供了 config 参数，则更新配置
+                if let Some(config_req) = request.config {
+                    let mut new_config = manager.config().clone();
+                    
+                    if let Some(threshold) = config_req.similarity_threshold {
+                        // 验证阈值范围
+                        new_config.similarity_threshold = threshold.clamp(0.5, 0.95);
+                    }
+                    if let Some(dedup_on_startup) = config_req.dedup_on_startup {
+                        new_config.dedup_on_startup = dedup_on_startup;
+                    }
+                    if let Some(enable_dedup) = config_req.enable_dedup {
+                        new_config.enable_dedup = enable_dedup;
+                    }
+                    
+                    manager.update_config(new_config.clone())
+                        .map_err(|e| McpError::internal_error(format!("更新配置失败: {}", e), None))?;
+                    
+                    let json_result = serde_json::json!({
+                        "success": true,
+                        "message": "配置已更新",
+                        "config": {
+                            "similarity_threshold": new_config.similarity_threshold,
+                            "dedup_on_startup": new_config.dedup_on_startup,
+                            "enable_dedup": new_config.enable_dedup
+                        }
+                    });
+                    format!("✅ 配置已更新\n{}", serde_json::to_string_pretty(&json_result).unwrap_or_default())
+                } else {
+                    // 返回当前配置
+                    let config = manager.config();
+                    let json_result = serde_json::json!({
+                        "similarity_threshold": config.similarity_threshold,
+                        "dedup_on_startup": config.dedup_on_startup,
+                        "enable_dedup": config.enable_dedup
+                    });
+                    format!("📋 当前配置\n{}", serde_json::to_string_pretty(&json_result).unwrap_or_default())
+                }
+            }
+            // === 新增: 删除 (移除指定记忆) ===
+            "删除" => {
+                let memory_id = request.memory_id.as_deref()
+                    .ok_or_else(|| McpError::invalid_params("缺少 memory_id 参数".to_string(), None))?;
+                
+                match manager.delete_memory(memory_id) {
+                    Ok(Some(content)) => {
+                        format!("✅ 已删除记忆\n🆔 ID: {}\n📝 内容: {}", memory_id, content)
+                    }
+                    Ok(None) => {
+                        format!("⚠️ 未找到指定 ID 的记忆: {}", memory_id)
+                    }
+                    Err(e) => {
+                        return Err(McpError::internal_error(format!("删除记忆失败: {}", e), None));
+                    }
+                }
+            }
             _ => {
                 return Err(McpError::invalid_params(
-                    format!("未知的操作类型: {}", request.action),
+                    format!("未知的操作类型: {}。支持的操作: 记忆 | 回忆 | 整理 | 列表 | 预览相似 | 配置 | 删除", request.action),
                     None
                 ));
             }

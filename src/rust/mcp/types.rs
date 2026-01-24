@@ -20,13 +20,25 @@ fn default_is_markdown() -> bool {
     true
 }
 
+/// 记忆配置请求结构
+/// 用于通过 MCP 或 Tauri 命令动态调整记忆去重配置
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct MemoryConfigRequest {
+    #[schemars(description = "相似度阈值 (0.5~0.95)，超过此值视为重复")]
+    pub similarity_threshold: Option<f64>,
+    #[schemars(description = "启动时自动去重")]
+    pub dedup_on_startup: Option<bool>,
+    #[schemars(description = "启用去重检测")]
+    pub enable_dedup: Option<bool>,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct JiyiRequest {
-    #[schemars(description = "操作类型：记忆(添加记忆), 回忆(获取项目信息)")]
+    #[schemars(description = "操作类型：记忆(添加) | 回忆(查询) | 整理(去重) | 列表(全部记忆) | 预览相似(检测相似度) | 配置(获取/更新) | 删除(移除记忆)")]
     pub action: String,
     #[schemars(description = "项目路径（必需）")]
     pub project_path: String,
-    #[schemars(description = "记忆内容（记忆操作时必需）")]
+    #[schemars(description = "记忆内容（记忆/预览相似操作时必需）")]
     #[serde(default)]
     pub content: String,
     #[schemars(
@@ -34,6 +46,12 @@ pub struct JiyiRequest {
     )]
     #[serde(default = "default_category")]
     pub category: String,
+    #[schemars(description = "配置参数（配置操作时使用）")]
+    #[serde(default)]
+    pub config: Option<MemoryConfigRequest>,
+    #[schemars(description = "记忆ID（删除操作时必需）")]
+    #[serde(default)]
+    pub memory_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
