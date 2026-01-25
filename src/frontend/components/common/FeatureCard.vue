@@ -63,8 +63,8 @@ defineProps<{
         :key="index"
         class="flex items-start text-xs group"
       >
-        <div class="mt-1.5 w-1 h-1 rounded-full bg-current opacity-60 mr-2 shrink-0 group-hover:opacity-100 transition-opacity" />
-        <span class="text-gray-600 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-gray-100 transition-colors leading-relaxed">
+        <div class="mt-1.5 w-1 h-1 rounded-full bg-current opacity-40 mr-2 shrink-0 group-hover:opacity-80 transition-opacity" />
+        <span class="text-gray-600 dark:text-gray-400 group-hover:text-gray-900 dark:group-hover:text-gray-200 transition-colors leading-relaxed">
           {{ item }}
         </span>
       </div>
