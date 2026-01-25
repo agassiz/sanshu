@@ -1,56 +1,76 @@
 <script setup lang="ts">
-interface Feature {
+import { NSkeleton, NSpace, NCard } from 'naive-ui'
+
+export interface Feature {
   icon: string
   title: string
   subtitle: string
-  iconBg: string
+  iconWrapperClass: string
   features: string[]
 }
 
 defineProps<{
-  feature: Feature
+  feature?: Feature
+  loading?: boolean
 }>()
 </script>
 
 <template>
-  <n-card size="small">
-    <!-- 卡片头部 -->
-    <template #header>
-      <n-space align="center">
-        <!-- 图标 -->
-        <div
-          class="w-10 h-10 rounded-lg flex items-center justify-center" :class="[
-            feature.iconBg,
-            feature.iconBg.includes('blue') ? 'dark:bg-blue-900'
-            : feature.iconBg.includes('purple') ? 'dark:bg-purple-900'
-              : feature.iconBg.includes('green') ? 'dark:bg-green-900'
-                : 'dark:bg-gray-900',
-          ]"
-        >
-          <!-- UnoCSS图标 -->
-          <div
-            :class="feature.icon"
-          />
-        </div>
-
-        <!-- 标题和副标题 -->
-        <div>
-          <div class="text-lg font-medium mb-1 tracking-tight">
-            {{ feature.title }}
+  <n-card size="small" class="h-full transition-all duration-300 hover:shadow-md hover:-translate-y-0.5">
+    <!-- 加载状态 -->
+    <template v-if="loading">
+      <template #header>
+        <n-space align="center">
+          <n-skeleton height="40px" width="40px" :sharp="false" />
+          <div>
+            <n-skeleton text width="120px" class="mb-1" />
+            <n-skeleton text width="80px" />
           </div>
-          <div class="text-sm opacity-60 font-normal">
-            {{ feature.subtitle }}
-          </div>
-        </div>
+        </n-space>
+      </template>
+      <n-space vertical size="small" class="mt-2">
+        <n-skeleton text :repeat="4" />
       </n-space>
     </template>
 
-    <!-- 功能列表 -->
-    <n-space vertical size="small">
-      <div v-for="(item, index) in feature.features" :key="index" class="flex items-center text-sm leading-relaxed">
-        <div class="w-1.5 h-1.5 bg-green-500 rounded-full mr-3 flex-shrink-0" />
-        <span class="opacity-90">{{ item }}</span>
+    <!-- 内容展示 -->
+    <template v-else-if="feature">
+      <template #header>
+        <n-space align="center">
+          <!-- 图标容器 -->
+          <div
+            class="w-10 h-10 rounded-xl flex items-center justify-center transition-colors duration-300"
+            :class="feature.iconWrapperClass"
+          >
+            <!-- 图标 -->
+            <div :class="feature.icon" />
+          </div>
+
+          <!-- 标题信息 -->
+          <div>
+            <div class="text-base font-semibold text-gray-900 dark:text-gray-100 leading-tight">
+              {{ feature.title }}
+            </div>
+            <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              {{ feature.subtitle }}
+            </div>
+          </div>
+        </n-space>
+      </template>
+
+      <!-- 功能列表 -->
+      <div class="grid gap-2">
+        <div
+          v-for="(item, index) in feature.features"
+          :key="index"
+          class="flex items-start text-xs group"
+        >
+          <div class="mt-1.5 w-1 h-1 rounded-full bg-current opacity-40 mr-2 shrink-0 group-hover:opacity-80 transition-opacity" />
+          <span class="text-gray-600 dark:text-gray-400 group-hover:text-gray-900 dark:group-hover:text-gray-200 transition-colors leading-relaxed">
+            {{ item }}
+          </span>
+        </div>
       </div>
-    </n-space>
+    </template>
   </n-card>
 </template>
