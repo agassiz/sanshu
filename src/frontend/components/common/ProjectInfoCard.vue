@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useMessage } from 'naive-ui'
+import { NSpace, NTag, useMessage } from 'naive-ui'
 import { computed, onMounted } from 'vue'
 import { useVersionCheck } from '../../composables/useVersionCheck'
 
@@ -117,6 +117,48 @@ onMounted(async () => {
           最后检查: {{ formattedLastCheckTime }}
         </div>
       </div>
+    </div>
+
+    <!-- 功能亮点标签云 -->
+    <div class="py-2 border-b border-gray-100 dark:border-gray-700">
+      <n-space size="small" :wrap="true">
+        <n-tag size="small" :bordered="false" type="info">
+          <template #icon>
+            <div class="i-carbon-chat text-xs" />
+          </template>
+          智能交互
+        </n-tag>
+        <n-tag size="small" :bordered="false" type="success">
+          <template #icon>
+            <div class="i-carbon-data-base text-xs" />
+          </template>
+          全局记忆
+        </n-tag>
+        <n-tag size="small" :bordered="false" type="warning">
+          <template #icon>
+            <div class="i-carbon-search text-xs" />
+          </template>
+          语义搜索
+        </n-tag>
+        <n-tag size="small" :bordered="false" type="error">
+          <template #icon>
+            <div class="i-carbon-document text-xs" />
+          </template>
+          框架文档
+        </n-tag>
+        <n-tag size="small" :bordered="false" type="primary">
+          <template #icon>
+            <div class="i-carbon-paint-brush text-xs" />
+          </template>
+          UI/UX 设计
+        </n-tag>
+        <n-tag size="small" :bordered="false" type="default">
+          <template #icon>
+            <div class="i-carbon-image text-xs" />
+          </template>
+          图标工坊
+        </n-tag>
+      </n-space>
     </div>
 
     <!-- 底部：GitHub区域 -->
