@@ -5,11 +5,137 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rmcp::model::{CallToolResult, Content, ErrorData as McpError, Tool};
+use serde::Serialize;
 
+use crate::config::load_standalone_config;
 use crate::mcp::types::SkillRunRequest;
 
 use super::engine;
-use super::types::{UiuxDesignSystemRequest, UiuxSearchRequest, UiuxStackRequest, UiuxSuggestRequest};
+use super::localize;
+use super::response::{UiuxError, UiuxResponse};
+use super::types::{
+    UiuxDesignSystemRequest, UiuxLang, UiuxMode, UiuxOutputFormat, UiuxSearchRequest,
+    UiuxStackRequest, UiuxSuggestRequest,
+};
+
+const DEFAULT_MAX_RESULTS: u32 = 3;
+
+#[derive(Clone, Copy)]
+struct UiuxDefaults {
+    lang: UiuxLang,
+    output_format: UiuxOutputFormat,
+    max_results_cap: u32,
+    beautify_enabled: bool,
+}
+
+impl UiuxDefaults {
+    fn load() -> Self {
+        // 从配置读取默认值，作为请求缺省兜底
+        let config = load_standalone_config().ok();
+        let mcp_config = config.as_ref().map(|c| &c.mcp_config);
+        let lang = mcp_config
+            .and_then(|c| c.uiux_default_lang.as_deref())
+            .and_then(parse_lang)
+            .unwrap_or(UiuxLang::Zh);
+        let output_format = mcp_config
+            .and_then(|c| c.uiux_output_format.as_deref())
+            .and_then(parse_output_format)
+            .unwrap_or(UiuxOutputFormat::Json);
+        let max_results_cap = mcp_config
+            .and_then(|c| c.uiux_max_results_cap)
+            .unwrap_or(10)
+            .max(1);
+        let beautify_enabled = mcp_config
+            .and_then(|c| c.uiux_beautify_enabled)
+            .unwrap_or(true);
+
+        Self {
+            lang,
+            output_format,
+            max_results_cap,
+            beautify_enabled,
+        }
+    }
+}
+
+fn parse_lang(value: &str) -> Option<UiuxLang> {
+    match value.trim().to_lowercase().as_str() {
+        "zh" => Some(UiuxLang::Zh),
+        "en" => Some(UiuxLang::En),
+        _ => None,
+    }
+}
+
+fn parse_output_format(value: &str) -> Option<UiuxOutputFormat> {
+    match value.trim().to_lowercase().as_str() {
+        "json" => Some(UiuxOutputFormat::Json),
+        "text" => Some(UiuxOutputFormat::Text),
+        _ => None,
+    }
+}
+
+fn resolve_lang(request: Option<UiuxLang>, defaults: UiuxDefaults) -> UiuxLang {
+    request.unwrap_or(defaults.lang)
+}
+
+fn resolve_output_format(
+    request: Option<UiuxOutputFormat>,
+    defaults: UiuxDefaults,
+) -> UiuxOutputFormat {
+    request.unwrap_or(defaults.output_format)
+}
+
+fn build_response<T: Serialize>(
+    tool: &str,
+    lang: UiuxLang,
+    data: T,
+    text: String,
+    errors: Vec<UiuxError>,
+) -> Result<CallToolResult, McpError> {
+    // 统一输出 JSON 结构，便于稳定消费
+    let response = UiuxResponse::new(tool, lang, data, text, errors);
+    let output = serde_json::to_string_pretty(&response)
+        .map_err(|e| McpError::internal_error(format!("JSON 序列化失败: {}", e), None))?;
+    Ok(CallToolResult::success(vec![Content::text(output)]))
+}
+
+#[derive(Serialize)]
+struct UiuxSearchData {
+    mode: UiuxMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<engine::SearchResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    beautify: Option<engine::BeautifyResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    legacy_text: Option<String>,
+}
+
+#[derive(Serialize)]
+struct UiuxStackData {
+    result: engine::SearchResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    legacy_text: Option<String>,
+}
+
+#[derive(Serialize)]
+struct UiuxDesignSystemData {
+    mode: UiuxMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    design_system: Option<engine::DesignSystem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    persisted: Option<engine::PersistSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    beautify: Option<engine::BeautifyResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    legacy_text: Option<String>,
+}
+
+#[derive(Serialize)]
+struct UiuxSuggestData {
+    result: engine::SuggestResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    legacy_text: Option<String>,
+}
 
 /// UI/UX Pro Max MCP 工具
 pub struct UiuxTool;
@@ -25,7 +151,9 @@ impl UiuxTool {
                 "query": { "type": "string", "description": "搜索查询" },
                 "domain": { "type": "string", "description": "领域（可选）" },
                 "max_results": { "type": "number", "description": "最大结果数（可选）" },
-                "format": { "type": "string", "enum": ["text", "json"], "description": "输出格式（text/json）" }
+                "output_format": { "type": "string", "enum": ["json", "text"], "description": "输出格式（json/text）" },
+                "lang": { "type": "string", "enum": ["zh", "en"], "description": "输出语言（zh/en）" },
+                "mode": { "type": "string", "enum": ["search", "beautify"], "description": "模式（search/beautify）" }
             },
             "required": ["query"]
         });
@@ -49,7 +177,8 @@ impl UiuxTool {
                 "query": { "type": "string", "description": "搜索查询" },
                 "stack": { "type": "string", "description": "技术栈（必填）" },
                 "max_results": { "type": "number", "description": "最大结果数（可选）" },
-                "format": { "type": "string", "enum": ["text", "json"], "description": "输出格式（text/json）" }
+                "output_format": { "type": "string", "enum": ["json", "text"], "description": "输出格式（json/text）" },
+                "lang": { "type": "string", "enum": ["zh", "en"], "description": "输出语言（zh/en）" }
             },
             "required": ["query", "stack"]
         });
@@ -75,7 +204,10 @@ impl UiuxTool {
                 "format": { "type": "string", "enum": ["ascii", "markdown"], "description": "输出格式（ascii/markdown）" },
                 "persist": { "type": "boolean", "description": "是否写入设计系统文件" },
                 "page": { "type": "string", "description": "页面名称（可选）" },
-                "output_dir": { "type": "string", "description": "输出目录（可选）" }
+                "output_dir": { "type": "string", "description": "输出目录（可选）" },
+                "output_format": { "type": "string", "enum": ["json", "text"], "description": "输出格式（json/text）" },
+                "lang": { "type": "string", "enum": ["zh", "en"], "description": "输出语言（zh/en）" },
+                "mode": { "type": "string", "enum": ["design_system", "beautify"], "description": "模式（design_system/beautify）" }
             },
             "required": ["query"]
         });
@@ -96,7 +228,9 @@ impl UiuxTool {
         let suggest_schema = serde_json::json!({
             "type": "object",
             "properties": {
-                "text": { "type": "string", "description": "待分析的用户输入" }
+                "text": { "type": "string", "description": "待分析的用户输入" },
+                "output_format": { "type": "string", "enum": ["json", "text"], "description": "输出格式（json/text）" },
+                "lang": { "type": "string", "enum": ["zh", "en"], "description": "输出语言（zh/en）" }
             },
             "required": ["text"]
         });
@@ -118,55 +252,27 @@ impl UiuxTool {
     }
 
     pub async fn call_tool(tool_name: &str, arguments: serde_json::Value) -> Result<CallToolResult, McpError> {
+        let defaults = UiuxDefaults::load();
         match tool_name {
             "uiux_search" => {
                 let req: UiuxSearchRequest = serde_json::from_value(arguments)
                     .map_err(|e| McpError::invalid_params(format!("参数解析失败: {}", e), None))?;
-                let result = engine::search_domain(&req.query, req.domain.as_deref(), req.max_results.map(|v| v as usize));
-                let format = req.format.as_deref().unwrap_or("text");
-                let output = if format == "json" {
-                    engine::format_search_json(&result)
-                        .map_err(|e| McpError::internal_error(e, None))?
-                } else {
-                    engine::format_search_output(&result)
-                };
-                Ok(CallToolResult::success(vec![Content::text(output)]))
+                handle_search(req, defaults)
             }
             "uiux_stack" => {
                 let req: UiuxStackRequest = serde_json::from_value(arguments)
                     .map_err(|e| McpError::invalid_params(format!("参数解析失败: {}", e), None))?;
-                let result = engine::search_stack(&req.query, &req.stack, req.max_results.map(|v| v as usize));
-                let format = req.format.as_deref().unwrap_or("text");
-                let output = if format == "json" {
-                    engine::format_search_json(&result)
-                        .map_err(|e| McpError::internal_error(e, None))?
-                } else {
-                    engine::format_search_output(&result)
-                };
-                Ok(CallToolResult::success(vec![Content::text(output)]))
+                handle_stack(req, defaults)
             }
             "uiux_design_system" => {
                 let req: UiuxDesignSystemRequest = serde_json::from_value(arguments)
                     .map_err(|e| McpError::invalid_params(format!("参数解析失败: {}", e), None))?;
-                let output_dir = req.output_dir.as_ref().map(PathBuf::from);
-                let output = engine::generate_design_system(
-                    &req.query,
-                    req.project_name.as_deref(),
-                    req.format.as_deref(),
-                    req.persist.unwrap_or(false),
-                    req.page.as_deref(),
-                    output_dir.as_deref(),
-                )
-                .map_err(|e| McpError::internal_error(e, None))?;
-                Ok(CallToolResult::success(vec![Content::text(output)]))
+                handle_design_system(req, defaults)
             }
             "uiux_suggest" => {
                 let req: UiuxSuggestRequest = serde_json::from_value(arguments)
                     .map_err(|e| McpError::invalid_params(format!("参数解析失败: {}", e), None))?;
-                let result = engine::suggest(&req.text);
-                let output = serde_json::to_string_pretty(&result)
-                    .map_err(|e| McpError::internal_error(format!("JSON 序列化失败: {}", e), None))?;
-                Ok(CallToolResult::success(vec![Content::text(output)]))
+                handle_suggest(req, defaults)
             }
             _ => Err(McpError::invalid_params(format!("未知的工具: {}", tool_name), None)),
         }
@@ -174,23 +280,40 @@ impl UiuxTool {
 
     /// skill_ui-ux-pro-max 入口
     pub async fn call_from_skill(action: &str, request: &SkillRunRequest) -> Result<CallToolResult, McpError> {
+        let defaults = UiuxDefaults::load();
         match action {
             "design_system" => {
                 let query = request
                     .query
                     .clone()
                     .ok_or_else(|| McpError::invalid_params("缺少 query 参数".to_string(), None))?;
-                let output = engine::generate_design_system(&query, None, None, false, None, None)
-                    .map_err(|e| McpError::internal_error(e, None))?;
-                Ok(CallToolResult::success(vec![Content::text(output)]))
+                let req = UiuxDesignSystemRequest {
+                    query,
+                    project_name: None,
+                    format: None,
+                    persist: Some(false),
+                    page: None,
+                    output_dir: None,
+                    output_format: Some(UiuxOutputFormat::Text),
+                    lang: None,
+                    mode: Some(UiuxMode::DesignSystem),
+                };
+                handle_design_system(req, defaults)
             }
             "search" | "" => {
                 let query = request
                     .query
                     .clone()
                     .ok_or_else(|| McpError::invalid_params("缺少 query 参数".to_string(), None))?;
-                let result = engine::search_domain(&query, None, None);
-                Ok(CallToolResult::success(vec![Content::text(engine::format_search_output(&result))]))
+                let req = UiuxSearchRequest {
+                    query,
+                    domain: None,
+                    max_results: None,
+                    output_format: Some(UiuxOutputFormat::Text),
+                    lang: None,
+                    mode: Some(UiuxMode::Search),
+                };
+                handle_search(req, defaults)
             }
             "custom" => {
                 let options = parse_cli_args(request.args.clone().unwrap_or_default());
@@ -198,37 +321,219 @@ impl UiuxTool {
                     .query
                     .ok_or_else(|| McpError::invalid_params("缺少 query 参数".to_string(), None))?;
 
+                let output_format = if options.json {
+                    UiuxOutputFormat::Json
+                } else {
+                    UiuxOutputFormat::Text
+                };
+
                 if options.design_system {
-                    let output_dir = options.output_dir.map(PathBuf::from);
-                    let output = engine::generate_design_system(
-                        &query,
-                        options.project_name.as_deref(),
-                        options.format.as_deref(),
-                        options.persist,
-                        options.page.as_deref(),
-                        output_dir.as_deref(),
-                    )
-                    .map_err(|e| McpError::internal_error(e, None))?;
-                    return Ok(CallToolResult::success(vec![Content::text(output)]));
+                    let req = UiuxDesignSystemRequest {
+                        query,
+                        project_name: options.project_name,
+                        format: options.format,
+                        persist: Some(options.persist),
+                        page: options.page,
+                        output_dir: options.output_dir,
+                        output_format: Some(output_format),
+                        lang: None,
+                        mode: Some(UiuxMode::DesignSystem),
+                    };
+                    return handle_design_system(req, defaults);
                 }
 
-                let result = if let Some(stack) = options.stack.as_deref() {
-                    engine::search_stack(&query, stack, options.max_results)
-                } else {
-                    engine::search_domain(&query, options.domain.as_deref(), options.max_results)
-                };
+                if let Some(stack) = options.stack {
+                    let req = UiuxStackRequest {
+                        query,
+                        stack,
+                        max_results: options.max_results.map(|v| v as u32),
+                        output_format: Some(output_format),
+                        lang: None,
+                    };
+                    return handle_stack(req, defaults);
+                }
 
-                let output = if options.json {
-                    engine::format_search_json(&result)
-                        .map_err(|e| McpError::internal_error(e, None))?
-                } else {
-                    engine::format_search_output(&result)
+                let req = UiuxSearchRequest {
+                    query,
+                    domain: options.domain,
+                    max_results: options.max_results.map(|v| v as u32),
+                    output_format: Some(output_format),
+                    lang: None,
+                    mode: Some(UiuxMode::Search),
                 };
-                Ok(CallToolResult::success(vec![Content::text(output)]))
+                handle_search(req, defaults)
             }
             _ => Err(McpError::invalid_params(format!("未知 action: {}", action), None)),
         }
     }
+}
+
+fn handle_search(req: UiuxSearchRequest, defaults: UiuxDefaults) -> Result<CallToolResult, McpError> {
+    let lang = resolve_lang(req.lang, defaults);
+    let output_format = resolve_output_format(req.output_format, defaults);
+    let mode = match req.mode {
+        Some(UiuxMode::Beautify) => UiuxMode::Beautify,
+        _ => UiuxMode::Search,
+    };
+    let max_results = engine::cap_max_results(req.max_results, defaults.max_results_cap, DEFAULT_MAX_RESULTS);
+
+    if matches!(mode, UiuxMode::Beautify) {
+        if !defaults.beautify_enabled {
+            let data = UiuxSearchData {
+                mode,
+                result: None,
+                beautify: None,
+                legacy_text: None,
+            };
+            let text = localize::error_text(lang, "UI 提示词美化已被禁用");
+            return build_response(
+                "uiux_search",
+                lang,
+                data,
+                text,
+                vec![UiuxError::new("beautify_disabled", "UI 提示词美化已被禁用")],
+            );
+        }
+
+        let beautify = engine::beautify_prompt(&req.query, max_results);
+        let data = UiuxSearchData {
+            mode,
+            result: None,
+            beautify: Some(beautify),
+            legacy_text: None,
+        };
+        let text = localize::beautify_summary(lang);
+        return build_response("uiux_search", lang, data, text, vec![]);
+    }
+
+    let result = engine::search_domain(&req.query, req.domain.as_deref(), Some(max_results));
+    let legacy_text = if matches!(output_format, UiuxOutputFormat::Text) {
+        // 保留旧版文本输出，方便过渡期对照
+        Some(engine::format_search_output(&result))
+    } else {
+        None
+    };
+    let text = localize::search_summary(lang, mode, &result);
+    let errors = result
+        .error
+        .as_ref()
+        .map(|err| vec![UiuxError::new("search_error", err)])
+        .unwrap_or_default();
+    let data = UiuxSearchData {
+        mode,
+        result: Some(result),
+        beautify: None,
+        legacy_text,
+    };
+    build_response("uiux_search", lang, data, text, errors)
+}
+
+fn handle_stack(req: UiuxStackRequest, defaults: UiuxDefaults) -> Result<CallToolResult, McpError> {
+    let lang = resolve_lang(req.lang, defaults);
+    let output_format = resolve_output_format(req.output_format, defaults);
+    let max_results = engine::cap_max_results(req.max_results, defaults.max_results_cap, DEFAULT_MAX_RESULTS);
+
+    let result = engine::search_stack(&req.query, &req.stack, Some(max_results));
+    let legacy_text = if matches!(output_format, UiuxOutputFormat::Text) {
+        Some(engine::format_search_output(&result))
+    } else {
+        None
+    };
+    let text = localize::stack_summary(lang, &result);
+    let errors = result
+        .error
+        .as_ref()
+        .map(|err| vec![UiuxError::new("stack_error", err)])
+        .unwrap_or_default();
+    let data = UiuxStackData { result, legacy_text };
+    build_response("uiux_stack", lang, data, text, errors)
+}
+
+fn handle_design_system(
+    req: UiuxDesignSystemRequest,
+    defaults: UiuxDefaults,
+) -> Result<CallToolResult, McpError> {
+    let lang = resolve_lang(req.lang, defaults);
+    let output_format = resolve_output_format(req.output_format, defaults);
+    let mode = match req.mode {
+        Some(UiuxMode::Beautify) => UiuxMode::Beautify,
+        _ => UiuxMode::DesignSystem,
+    };
+
+    if matches!(mode, UiuxMode::Beautify) {
+        if !defaults.beautify_enabled {
+            let data = UiuxDesignSystemData {
+                mode,
+                design_system: None,
+                persisted: None,
+                beautify: None,
+                legacy_text: None,
+            };
+            let text = localize::error_text(lang, "UI 提示词美化已被禁用");
+            return build_response(
+                "uiux_design_system",
+                lang,
+                data,
+                text,
+                vec![UiuxError::new("beautify_disabled", "UI 提示词美化已被禁用")],
+            );
+        }
+
+        let max_results = engine::cap_max_results(None, defaults.max_results_cap, DEFAULT_MAX_RESULTS);
+        let beautify = engine::beautify_prompt(&req.query, max_results);
+        let data = UiuxDesignSystemData {
+            mode,
+            design_system: None,
+            persisted: None,
+            beautify: Some(beautify),
+            legacy_text: None,
+        };
+        let text = localize::beautify_summary(lang);
+        return build_response("uiux_design_system", lang, data, text, vec![]);
+    }
+
+    let output_dir = req.output_dir.as_ref().map(PathBuf::from);
+    let output = engine::generate_design_system(
+        &req.query,
+        req.project_name.as_deref(),
+        req.format.as_deref(),
+        req.persist.unwrap_or(false),
+        req.page.as_deref(),
+        output_dir.as_deref(),
+    )
+    .map_err(|e| McpError::internal_error(e, None))?;
+
+    let legacy_text = if matches!(output_format, UiuxOutputFormat::Text) {
+        // 保留设计系统旧版文本输出，便于人工核对
+        Some(output.formatted.clone())
+    } else {
+        None
+    };
+    let text = localize::design_system_summary(
+        lang,
+        &output.design_system.project_name,
+        output.persisted.is_some(),
+    );
+    let data = UiuxDesignSystemData {
+        mode,
+        design_system: Some(output.design_system),
+        persisted: output.persisted,
+        beautify: None,
+        legacy_text,
+    };
+    build_response("uiux_design_system", lang, data, text, vec![])
+}
+
+fn handle_suggest(req: UiuxSuggestRequest, defaults: UiuxDefaults) -> Result<CallToolResult, McpError> {
+    let lang = resolve_lang(req.lang, defaults);
+    let _output_format = resolve_output_format(req.output_format, defaults);
+    let result = engine::suggest(&req.text);
+    let text = localize::suggest_summary(lang, &result);
+    let data = UiuxSuggestData {
+        result,
+        legacy_text: None,
+    };
+    build_response("uiux_suggest", lang, data, text, vec![])
 }
 
 #[derive(Default)]

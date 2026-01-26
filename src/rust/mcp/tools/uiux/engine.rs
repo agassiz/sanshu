@@ -13,6 +13,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::log_debug;
+use super::sanitize::{sanitize_path_segment, sanitize_slug};
 
 const MAX_RESULTS: usize = 3;
 const BOX_WIDTH: usize = 90;
@@ -534,6 +535,26 @@ pub struct SuggestResult {
     pub matched_keywords: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct BeautifyResult {
+    pub style: Vec<HashMap<String, String>>,
+    pub color: Vec<HashMap<String, String>>,
+    pub typography: Vec<HashMap<String, String>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PersistSummary {
+    pub design_system_dir: String,
+    pub created_files: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DesignSystemOutput {
+    pub design_system: DesignSystem,
+    pub persisted: Option<PersistSummary>,
+    pub formatted: String,
+}
+
 struct UiuxStore {
     domains: HashMap<&'static str, DomainIndex>,
     stacks: HashMap<&'static str, DomainIndex>,
@@ -645,6 +666,13 @@ fn normalize_format(value: Option<&str>, default: &str) -> String {
         .unwrap_or(default)
         .trim()
         .to_lowercase()
+}
+
+/// 结果数量上限控制，避免过大输出
+pub fn cap_max_results(value: Option<u32>, cap: u32, default: u32) -> usize {
+    let cap = cap.max(1);
+    let raw = value.unwrap_or(default).max(1);
+    raw.min(cap) as usize
 }
 
 pub fn search_domain(query: &str, domain: Option<&str>, max_results: Option<usize>) -> SearchResult {
@@ -767,6 +795,38 @@ pub fn format_search_output(result: &SearchResult) -> String {
 
 pub fn format_search_json(result: &SearchResult) -> Result<String, String> {
     serde_json::to_string_pretty(result).map_err(|e| format!("JSON 序列化失败: {}", e))
+}
+
+/// UI 提示词美化：基于现有数据组合，避免重复
+pub fn beautify_prompt(query: &str, max_results: usize) -> BeautifyResult {
+    let limit = max_results.max(1);
+    let style = search_domain(query, Some("style"), Some(limit));
+    let color = search_domain(query, Some("color"), Some(limit));
+    let typography = search_domain(query, Some("typography"), Some(limit));
+
+    BeautifyResult {
+        style: dedupe_results(style.results),
+        color: dedupe_results(color.results),
+        typography: dedupe_results(typography.results),
+    }
+}
+
+fn dedupe_results(rows: Vec<HashMap<String, String>>) -> Vec<HashMap<String, String>> {
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for row in rows {
+        let mut items: Vec<_> = row.iter().collect();
+        items.sort_by(|a, b| a.0.cmp(b.0));
+        let signature = items
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<_>>()
+            .join("|");
+        if seen.insert(signature) {
+            output.push(row);
+        }
+    }
+    output
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1993,25 +2053,18 @@ fn format_page_override_md(design_system: &DesignSystem, page_name: &str, page_q
     lines.join("\n")
 }
 
-struct PersistResult {
-    design_system_dir: PathBuf,
-    created_files: Vec<PathBuf>,
-}
-
 fn persist_design_system(
     design_system: &DesignSystem,
     page: Option<&str>,
     output_dir: Option<&Path>,
     page_query: Option<&str>,
-) -> Result<PersistResult, String> {
+) -> Result<PersistSummary, String> {
     let base_dir = output_dir
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-    let project_slug = design_system
-        .project_name
-        .to_lowercase()
-        .replace(' ', "-");
+    // 关键路径使用净化结果防止路径穿越
+    let project_slug = sanitize_slug(&design_system.project_name);
 
     let design_system_dir = base_dir.join("design-system").join(&project_slug);
     let pages_dir = design_system_dir.join("pages");
@@ -2026,16 +2079,19 @@ fn persist_design_system(
     let mut created = vec![master_file];
 
     if let Some(page_name) = page {
-        let page_slug = page_name.to_lowercase().replace(' ', "-");
+        let page_slug = sanitize_path_segment(page_name);
         let page_file = pages_dir.join(format!("{}.md", page_slug));
         std::fs::write(&page_file, format_page_override_md(design_system, page_name, page_query))
             .map_err(|e| format!("写入页面覆盖文件失败: {}", e))?;
         created.push(page_file);
     }
 
-    Ok(PersistResult {
-        design_system_dir,
-        created_files: created,
+    Ok(PersistSummary {
+        design_system_dir: design_system_dir.to_string_lossy().to_string(),
+        created_files: created
+            .into_iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect(),
     })
 }
 
@@ -2046,56 +2102,54 @@ pub fn generate_design_system(
     persist: bool,
     page: Option<&str>,
     output_dir: Option<&Path>,
-) -> Result<String, String> {
+) -> Result<DesignSystemOutput, String> {
     let generator = DesignSystemGenerator::new();
     let design_system = generator.generate(query, project_name);
 
-    if persist {
-        let persist_result = persist_design_system(&design_system, page, output_dir, Some(query))?;
-        let mut output = match normalize_format(format, "ascii").as_str() {
-            "markdown" => format_markdown(&design_system),
-            _ => format_ascii_box(&design_system),
-        };
+    let persisted = if persist {
+        Some(persist_design_system(&design_system, page, output_dir, Some(query))?)
+    } else {
+        None
+    };
 
-        let project_slug = design_system
-            .project_name
-            .to_lowercase()
-            .replace(' ', "-");
-        output.push_str("\n");
-        output.push_str(&"=".repeat(60));
-        output.push_str("\n");
-        output.push_str(&format!(
+    let mut formatted = match normalize_format(format, "ascii").as_str() {
+        "markdown" => format_markdown(&design_system),
+        _ => format_ascii_box(&design_system),
+    };
+
+    if persist {
+        let project_slug = sanitize_slug(&design_system.project_name);
+        formatted.push_str("\n");
+        formatted.push_str(&"=".repeat(60));
+        formatted.push_str("\n");
+        formatted.push_str(&format!(
             "✅ Design system persisted to design-system/{}/\n",
             project_slug
         ));
-        output.push_str(&format!(
+        formatted.push_str(&format!(
             "   📄 design-system/{}/MASTER.md (Global Source of Truth)\n",
             project_slug
         ));
         if let Some(page_name) = page {
-            let page_slug = page_name.to_lowercase().replace(' ', "-");
-            output.push_str(&format!(
+            let page_slug = sanitize_path_segment(page_name);
+            formatted.push_str(&format!(
                 "   📄 design-system/{}/pages/{}.md (Page Overrides)\n",
                 project_slug, page_slug
             ));
         }
-        output.push_str("\n");
-        output.push_str(&format!(
+        formatted.push_str("\n");
+        formatted.push_str(&format!(
             "📖 Usage: When building a page, check design-system/{}/pages/[page].md first.\n",
             project_slug
         ));
-        output.push_str("   If exists, its rules override MASTER.md. Otherwise, use MASTER.md.\n");
-        output.push_str(&"=".repeat(60));
-
-        // 避免未使用告警
-        let _ = persist_result;
-
-        return Ok(output);
+        formatted.push_str("   If exists, its rules override MASTER.md. Otherwise, use MASTER.md.\n");
+        formatted.push_str(&"=".repeat(60));
     }
 
-    Ok(match normalize_format(format, "ascii").as_str() {
-        "markdown" => format_markdown(&design_system),
-        _ => format_ascii_box(&design_system),
+    Ok(DesignSystemOutput {
+        design_system,
+        persisted,
+        formatted,
     })
 }
 

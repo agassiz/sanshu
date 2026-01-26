@@ -25,6 +25,10 @@ impl InteractionTool {
             },
             is_markdown: request.is_markdown,
             project_root_path: request.project_root_path,
+            // 透传 UI/UX 上下文控制信号
+            uiux_intent: request.uiux_intent,
+            uiux_context_policy: request.uiux_context_policy,
+            uiux_reason: request.uiux_reason,
         };
 
         match create_tauri_popup(&popup_request) {

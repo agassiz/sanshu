@@ -6,6 +6,9 @@ export interface McpRequest {
   predefined_options?: string[]
   is_markdown?: boolean
   project_root_path?: string
+  uiux_intent?: 'none' | 'beautify' | 'page_refactor' | 'uiux_search'
+  uiux_context_policy?: 'auto' | 'force' | 'forbid'
+  uiux_reason?: string
 }
 
 // 自定义prompt类型定义

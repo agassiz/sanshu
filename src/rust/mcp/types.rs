@@ -14,6 +14,15 @@ pub struct ZhiRequest {
     #[schemars(description = "项目根路径（可选，用于索引状态可视化）")]
     #[serde(default)]
     pub project_root_path: Option<String>,
+    #[schemars(description = "UI/UX 意图标记：none|beautify|page_refactor|uiux_search")]
+    #[serde(default)]
+    pub uiux_intent: Option<String>,
+    #[schemars(description = "UI/UX 上下文追加策略：auto|force|forbid")]
+    #[serde(default)]
+    pub uiux_context_policy: Option<String>,
+    #[schemars(description = "UI/UX 上下文追加原因（可选）")]
+    #[serde(default)]
+    pub uiux_reason: Option<String>,
 }
 
 fn default_is_markdown() -> bool {
@@ -130,6 +139,9 @@ pub struct PopupRequest {
     pub predefined_options: Option<Vec<String>>,
     pub is_markdown: bool,
     pub project_root_path: Option<String>,
+    pub uiux_intent: Option<String>,
+    pub uiux_context_policy: Option<String>,
+    pub uiux_reason: Option<String>,
 }
 
 /// 新的结构化响应数据格式

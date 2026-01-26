@@ -128,6 +128,16 @@ pub struct McpConfig {
     pub context7_api_key: Option<String>, // Context7 API密钥 (可选，免费使用时可为空)
     pub skill_python_path: Option<String>, // Skill Python 路径（可选，默认走 PATH）
 
+    // UI/UX Pro Max 配置
+    /// 默认语言（"zh" | "en"）
+    pub uiux_default_lang: Option<String>,
+    /// 默认输出格式（"json" | "text"）
+    pub uiux_output_format: Option<String>,
+    /// 最大结果数上限（默认 10）
+    pub uiux_max_results_cap: Option<u32>,
+    /// 是否启用 UI 提示词美化（默认 true）
+    pub uiux_beautify_enabled: Option<bool>,
+
     // 图标工坊配置
     /// 默认保存路径（相对于项目根目录，如 "assets/icons"）
     pub icon_default_save_path: Option<String>,
@@ -318,6 +328,11 @@ pub fn default_mcp_config() -> McpConfig {
         acemcp_proxy_password: None,
         context7_api_key: None,
         skill_python_path: None,
+        // UI/UX Pro Max 默认配置
+        uiux_default_lang: Some("zh".to_string()),
+        uiux_output_format: Some("json".to_string()),
+        uiux_max_results_cap: Some(10),
+        uiux_beautify_enabled: Some(true),
         // 图标工坊配置默认值
         icon_default_save_path: None,      // 使用默认 "assets/icons"
         icon_default_format: None,          // 默认 SVG
