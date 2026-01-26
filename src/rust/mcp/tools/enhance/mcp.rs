@@ -22,6 +22,9 @@ pub struct EnhanceMcpRequest {
     /// 是否包含对话历史（可选）
     #[serde(default)]
     pub include_history: Option<bool>,
+    /// 指定参与增强的历史记录 ID（可选）
+    #[serde(default)]
+    pub selected_history_ids: Option<Vec<String>>,
 }
 
 /// 提示词增强 MCP 工具
@@ -95,6 +98,7 @@ impl EnhanceTool {
             project_root_path: project_root_path.clone(),
             current_file_path: None,
             include_history,
+            selected_history_ids: request.selected_history_ids.clone(),
         };
 
         match enhancer.enhance(enhance_request).await {

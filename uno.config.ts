@@ -196,6 +196,7 @@ export default defineConfig({
     'i-carbon-rule',
     'i-carbon-chat',
     'i-carbon-information',
+    'i-carbon-warning-alt',
     'i-carbon-sun',
     'i-carbon-moon',
     'i-carbon-play',

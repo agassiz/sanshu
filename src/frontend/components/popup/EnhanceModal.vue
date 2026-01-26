@@ -1,8 +1,16 @@
 <script setup lang="ts">
+<script setup lang="ts">
+import type { CustomPrompt } from '../../types/popup'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useMessage } from 'naive-ui'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useMediaQuery } from '@vueuse/core'
+
+import EnhanceConfigPanel from './enhance/EnhanceConfigPanel.vue'
+import EnhancePreview from './enhance/EnhancePreview.vue'
+import EnhanceResult from './enhance/EnhanceResult.vue'
+import { buildConditionalContext } from '../../utils/conditionalContext'
 
 interface Props {
   show: boolean
@@ -26,10 +34,30 @@ interface EnhanceStreamEvent {
   progress: number
 }
 
+interface EnhanceConfig {
+  includeContext: boolean
+  includeHistory: boolean
+  selectedHistoryIds: string[]
+  useDefaultRule: boolean
+  customRule: string
+}
+
+interface ChatHistoryEntry {
+  id: string
+  user_input: string
+  ai_response_summary: string
+  timestamp: string
+  source?: string
+}
+
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
 const message = useMessage()
+const isMobile = useMediaQuery('(max-width: 640px)')
+
+const DEFAULT_RULE = '请确保增强后的提示词以中文为主要输出语言'
+const CUSTOM_RULE_MAX = 200
 
 // 状态
 const isEnhancing = ref(false)
@@ -39,10 +67,53 @@ const progress = ref(0)
 const errorMessage = ref('')
 const hasCompleted = ref(false)
 
+const config = ref<EnhanceConfig>({
+  includeContext: false,
+  includeHistory: true,
+  selectedHistoryIds: [],
+  useDefaultRule: true,
+  customRule: '',
+})
+
+const customRuleInput = ref('')
+const conditionalPrompts = ref<CustomPrompt[]>([])
+const historyEntries = ref<ChatHistoryEntry[]>([])
+const historyLoading = ref(false)
+const historyError = ref('')
+const historySelectionTouched = ref(false)
+
 // 事件监听器
 let unlisten: UnlistenFn | null = null
+let customRuleTimer: number | undefined
 
 // 计算属性
+const corePrompt = computed(() => props.originalPrompt?.trim() ?? '')
+const coreCharCount = computed(() => corePrompt.value.length)
+const contextText = computed(() => buildConditionalContext(conditionalPrompts.value))
+
+const finalPrompt = computed(() => {
+  if (!corePrompt.value) return ''
+
+  const parts: string[] = []
+  if (config.value.includeContext && contextText.value.trim()) {
+    parts.push(contextText.value.trim())
+  }
+  parts.push(corePrompt.value)
+
+  const rules: string[] = []
+  if (config.value.useDefaultRule) {
+    rules.push(DEFAULT_RULE)
+  }
+  if (config.value.customRule.trim()) {
+    rules.push(config.value.customRule.trim())
+  }
+  if (rules.length > 0) {
+    parts.push(`---\n增强规则：\n${rules.join('\n')}`)
+  }
+
+  return parts.join('\n\n')
+})
+
 const canConfirm = computed(() => hasCompleted.value && enhancedPrompt.value.length > 0)
 const statusText = computed(() => {
   if (errorMessage.value) return '增强失败'
@@ -50,6 +121,141 @@ const statusText = computed(() => {
   if (isEnhancing.value) return `增强中... ${progress.value}%`
   return '准备就绪'
 })
+
+// 处理配置区开关变化
+function handleIncludeContextChange(value: boolean) {
+  config.value.includeContext = value
+  if (value) {
+    loadConditionalPrompts()
+  }
+}
+
+function handleIncludeHistoryChange(value: boolean) {
+  config.value.includeHistory = value
+  if (value) {
+    loadHistoryEntries()
+  }
+}
+
+function handleUseDefaultRuleChange(value: boolean) {
+  config.value.useDefaultRule = value
+}
+
+function handleCustomRuleInputChange(value: string) {
+  customRuleInput.value = value
+}
+
+// 统一重置增强状态
+function resetEnhanceState() {
+  isEnhancing.value = false
+  streamContent.value = ''
+  enhancedPrompt.value = ''
+  progress.value = 0
+  errorMessage.value = ''
+  hasCompleted.value = false
+}
+
+// 重置配置（保持默认值）
+function resetConfigState() {
+  config.value = {
+    includeContext: false,
+    includeHistory: true,
+    selectedHistoryIds: [],
+    useDefaultRule: true,
+    customRule: '',
+  }
+  customRuleInput.value = ''
+  conditionalPrompts.value = []
+  historyEntries.value = []
+  historyError.value = ''
+  historySelectionTouched.value = false
+}
+
+// 加载条件性 prompt 上下文
+async function loadConditionalPrompts() {
+  try {
+    const configData = await invoke('get_custom_prompt_config')
+    const promptConfig = configData as any
+    const prompts = (promptConfig.prompts || []) as CustomPrompt[]
+    conditionalPrompts.value = prompts.filter(prompt => prompt.type === 'conditional')
+  }
+  catch (error) {
+    console.error('加载条件性prompt失败:', error)
+    message.error('加载快捷上下文失败')
+  }
+}
+
+// 加载最近历史记录
+async function loadHistoryEntries() {
+  if (!props.projectRootPath) {
+    historyEntries.value = []
+    historyError.value = '未提供项目路径，无法读取历史记录'
+    return
+  }
+
+  historyLoading.value = true
+  historyError.value = ''
+
+  try {
+    const entries = await invoke('get_chat_history', {
+      projectRootPath: props.projectRootPath,
+      count: 5,
+    }) as ChatHistoryEntry[]
+
+    historyEntries.value = entries
+
+    // 未被用户修改时，默认全选
+    if (!historySelectionTouched.value) {
+      config.value.selectedHistoryIds = entries.map(entry => entry.id)
+    }
+  }
+  catch (error) {
+    console.error('加载对话历史失败:', error)
+    historyError.value = '加载历史记录失败'
+  }
+  finally {
+    historyLoading.value = false
+  }
+}
+
+// 自定义规则输入防抖
+watch(customRuleInput, (value) => {
+  if (value.length > CUSTOM_RULE_MAX) {
+    customRuleInput.value = value.slice(0, CUSTOM_RULE_MAX)
+    return
+  }
+
+  if (customRuleTimer) {
+    window.clearTimeout(customRuleTimer)
+  }
+
+  customRuleTimer = window.setTimeout(() => {
+    config.value.customRule = customRuleInput.value.trim()
+  }, 300)
+})
+
+// 处理历史选择变更
+function handleHistorySelectionChange(ids: string[]) {
+  historySelectionTouched.value = true
+  config.value.selectedHistoryIds = ids
+}
+
+// 准备增强：先加载上下文/历史，再触发增强
+async function prepareEnhance() {
+  if (!corePrompt.value) return
+
+  if (config.value.includeContext) {
+    await loadConditionalPrompts()
+  }
+
+  if (config.value.includeHistory) {
+    await loadHistoryEntries()
+  }
+
+  if (props.show) {
+    startEnhance()
+  }
+}
 
 // 开始增强
 async function startEnhance() {
@@ -62,18 +268,14 @@ async function startEnhance() {
   }
 
   // 重置状态
+  resetEnhanceState()
   isEnhancing.value = true
-  streamContent.value = ''
-  enhancedPrompt.value = ''
-  progress.value = 0
-  errorMessage.value = ''
-  hasCompleted.value = false
 
   try {
     // 设置事件监听
     unlisten = await listen<EnhanceStreamEvent>('enhance-stream', (event) => {
       const data = event.payload
-      
+
       switch (data.event_type) {
         case 'chunk':
           if (data.accumulated_text) {
@@ -99,12 +301,17 @@ async function startEnhance() {
       }
     })
 
+    const selectedHistoryIds = config.value.includeHistory
+      ? (historySelectionTouched.value ? config.value.selectedHistoryIds : null)
+      : null
+
     // 调用后端增强
     await invoke('enhance_prompt_stream', {
-      prompt: props.originalPrompt,
+      prompt: finalPrompt.value,
       projectRootPath: props.projectRootPath || null,
       currentFilePath: props.currentFilePath || null,
-      includeHistory: true,
+      includeHistory: config.value.includeHistory,
+      selectedHistoryIds,
     })
   }
   catch (error) {
@@ -140,18 +347,19 @@ function cleanup() {
     unlisten()
     unlisten = null
   }
-  isEnhancing.value = false
-  streamContent.value = ''
-  enhancedPrompt.value = ''
-  progress.value = 0
-  errorMessage.value = ''
-  hasCompleted.value = false
+  if (customRuleTimer) {
+    window.clearTimeout(customRuleTimer)
+    customRuleTimer = undefined
+  }
+  resetEnhanceState()
 }
 
 // 监听 show 变化，自动开始增强
 watch(() => props.show, (newValue) => {
-  if (newValue && props.originalPrompt) {
-    startEnhance()
+  if (newValue) {
+    resetEnhanceState()
+    resetConfigState()
+    prepareEnhance()
   }
   // 关闭弹窗时清理监听与状态，避免残留
   if (!newValue) {
@@ -161,8 +369,10 @@ watch(() => props.show, (newValue) => {
 
 // 组件挂载
 onMounted(() => {
-  if (props.show && props.originalPrompt) {
-    startEnhance()
+  if (props.show && corePrompt.value) {
+    resetEnhanceState()
+    resetConfigState()
+    prepareEnhance()
   }
 })
 
@@ -176,109 +386,112 @@ onUnmounted(() => {
   <n-modal
     :show="show"
     preset="card"
-    :title="'✨ 提示词增强'"
-    :closable="!isEnhancing"
+    :closable="false"
     :mask-closable="!isEnhancing"
-    style="width: 600px; max-width: 90vw;"
+    class="w-[640px] max-w-[92vw]"
     @update:show="(val: boolean) => !isEnhancing && emit('update:show', val)"
   >
-    <!-- 原始提示词 -->
-    <div class="mb-4">
-      <div class="text-xs text-gray-400 mb-1 flex items-center gap-1">
-        <div class="i-carbon-document w-3 h-3" />
-        原始提示词
+    <template #header>
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-100">
+          <div class="i-carbon-magic-wand h-4 w-4 text-amber-500" />
+          提示词增强
+        </div>
+        <n-button
+          text
+          size="small"
+          :disabled="isEnhancing"
+          class="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+          @click="handleClose"
+        >
+          <div class="i-carbon-close h-4 w-4" />
+        </n-button>
       </div>
-      <div class="p-3 bg-gray-800/50 rounded-lg text-sm text-gray-300 max-h-24 overflow-y-auto">
-        {{ originalPrompt }}
-      </div>
-    </div>
+    </template>
 
-    <!-- 进度条 -->
-    <div v-if="isEnhancing" class="mb-4">
-      <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
-        <span>{{ statusText }}</span>
-        <span>{{ progress }}%</span>
+    <div class="space-y-4">
+      <!-- 核心输入区 -->
+      <div class="rounded-2xl border border-stone-200/80 bg-gradient-to-br from-stone-50/80 to-amber-50/60 p-4 shadow-sm dark:border-slate-700/50 dark:from-slate-900/40 dark:to-slate-800/40">
+        <div class="mb-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+          <div class="flex items-center gap-2">
+            <div class="i-carbon-document h-3.5 w-3.5" />
+            核心提示词
+          </div>
+          <span>{{ coreCharCount }} 字符</span>
+        </div>
+        <div class="max-h-28 overflow-y-auto whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-200">
+          {{ corePrompt || '暂无输入内容' }}
+        </div>
       </div>
-      <n-progress
-        type="line"
-        :percentage="progress"
-        :height="6"
-        :border-radius="3"
-        :show-indicator="false"
-        status="info"
-      />
-    </div>
 
-    <!-- 流式输出显示区域 -->
-    <div class="mb-4">
-      <div class="text-xs text-gray-400 mb-1 flex items-center gap-1">
-        <div class="i-carbon-magic-wand w-3 h-3" />
-        {{ hasCompleted ? '增强结果' : '实时输出' }}
-      </div>
-      <div
-        class="p-3 bg-gray-900 rounded-lg text-sm min-h-32 max-h-64 overflow-y-auto border transition-colors"
-        :class="[
-          hasCompleted ? 'border-green-500/50' : 'border-gray-700',
-          errorMessage ? 'border-red-500/50' : ''
-        ]"
+      <!-- 配置区 -->
+      <EnhanceConfigPanel
+        :include-context="config.includeContext"
+        :include-history="config.includeHistory"
+        :use-default-rule="config.useDefaultRule"
+        :custom-rule-input="customRuleInput"
+        :custom-rule-max="CUSTOM_RULE_MAX"
+        :history-entries="historyEntries"
+        :selected-history-ids="config.selectedHistoryIds"
+        :history-loading="historyLoading"
+        :history-error="historyError"
+        :default-rule-text="DEFAULT_RULE"
+        :is-mobile="isMobile"
+        @update:include-context="handleIncludeContextChange"
+        @update:include-history="handleIncludeHistoryChange"
+        @update:use-default-rule="handleUseDefaultRuleChange"
+        @update:custom-rule-input="handleCustomRuleInputChange"
+        @update:selected-history-ids="handleHistorySelectionChange"
       >
-        <!-- 增强完成后显示增强结果 -->
-        <div v-if="hasCompleted && enhancedPrompt" class="text-green-400 whitespace-pre-wrap">
-          {{ enhancedPrompt }}
-        </div>
-        <!-- 增强中显示流式内容 -->
-        <div v-else-if="streamContent" class="text-gray-300 whitespace-pre-wrap">
-          {{ streamContent }}
-          <span v-if="isEnhancing" class="inline-block w-2 h-4 bg-blue-500 animate-pulse ml-1" />
-        </div>
-        <!-- 错误信息 -->
-        <div v-else-if="errorMessage" class="text-red-400">
-          ❌ {{ errorMessage }}
-        </div>
-        <!-- 等待中 -->
-        <div v-else class="text-gray-500 flex items-center gap-2">
-          <n-spin size="small" />
-          正在准备增强...
-        </div>
-      </div>
-    </div>
-
-    <!-- 操作按钮 -->
-    <div class="flex justify-end gap-3">
-      <n-button
-        @click="handleClose"
-      >
-        取消
-      </n-button>
-      <n-button
-        v-if="errorMessage && !isEnhancing"
-        type="warning"
-        @click="handleRetry"
-      >
-        重试
-      </n-button>
-      <n-button
-        type="primary"
-        :disabled="!canConfirm"
-        @click="handleConfirm"
-      >
-        <template #icon>
-          <div class="i-carbon-checkmark w-4 h-4" />
+        <template #context-preview>
+          <EnhancePreview :core-text="corePrompt" :context-text="contextText" />
         </template>
-        使用增强结果
-      </n-button>
+      </EnhanceConfigPanel>
+
+      <!-- 增强结果区 -->
+      <EnhanceResult
+        :is-enhancing="isEnhancing"
+        :has-completed="hasCompleted"
+        :error-message="errorMessage"
+        :stream-content="streamContent"
+        :enhanced-prompt="enhancedPrompt"
+        :progress="progress"
+        :status-text="statusText"
+      />
+
+      <!-- 操作按钮区 -->
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <n-button
+            v-if="errorMessage && !isEnhancing"
+            size="small"
+            class="w-full !bg-gradient-to-r from-rose-200 to-amber-200 !text-rose-900 shadow-sm hover:from-rose-300 hover:to-amber-300 sm:w-auto"
+            @click="handleRetry"
+          >
+            重试
+          </n-button>
+        </div>
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <n-button
+            size="small"
+            class="w-full bg-white/70 text-slate-600 shadow-sm hover:bg-white sm:w-auto dark:bg-slate-800/60 dark:text-slate-200 dark:hover:bg-slate-800"
+            @click="handleClose"
+          >
+            取消
+          </n-button>
+          <n-button
+            size="small"
+            :disabled="!canConfirm"
+            class="w-full !bg-gradient-to-r from-emerald-200 to-teal-200 !text-emerald-900 shadow-sm hover:from-emerald-300 hover:to-teal-300 sm:w-auto"
+            @click="handleConfirm"
+          >
+            <template #icon>
+              <div class="i-carbon-checkmark h-4 w-4" />
+            </template>
+            确认使用
+          </n-button>
+        </div>
+      </div>
     </div>
   </n-modal>
 </template>
-
-<style scoped>
-/* 光标闪烁动画 */
-@keyframes blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0; }
-}
-
-.animate-pulse {
-  animation: blink 1s ease-in-out infinite;
-}
-</style>

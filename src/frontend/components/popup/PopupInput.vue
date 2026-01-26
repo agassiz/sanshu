@@ -9,6 +9,7 @@ import { useMessage } from 'naive-ui'
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { useKeyboard } from '../../composables/useKeyboard'
 import { useMcpToolsReactive } from '../../composables/useMcpTools'
+import { buildConditionalContext } from '../../utils/conditionalContext'
 
 interface Props {
   request: McpRequest | null
@@ -449,18 +450,9 @@ async function handleConditionalToggle(promptId: string, value: boolean) {
 
 // 生成条件性prompt的追加内容
 function generateConditionalContent(): string {
-  const conditionalTexts: string[] = []
-
-  conditionalPrompts.value.forEach((prompt) => {
-    const isEnabled = prompt.current_state ?? false
-    const template = isEnabled ? prompt.template_true : prompt.template_false
-
-    if (template && template.trim()) {
-      conditionalTexts.push(template.trim())
-    }
-  })
-
-  return conditionalTexts.length > 0 ? `\n\n${conditionalTexts.join('\n')}` : ''
+  // 复用统一的上下文拼接逻辑，保持增强与输入一致
+  const conditionalText = buildConditionalContext(conditionalPrompts.value)
+  return conditionalText ? `\n\n${conditionalText}` : ''
 }
 
 // 获取条件性prompt的自适应描述

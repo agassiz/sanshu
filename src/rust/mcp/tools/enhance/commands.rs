@@ -16,6 +16,7 @@ pub async fn enhance_prompt_stream(
     project_root_path: Option<String>,
     current_file_path: Option<String>,
     include_history: Option<bool>,
+    selected_history_ids: Option<Vec<String>>,
 ) -> Result<EnhanceResponse, String> {
     log_important!(info, "收到增强请求: prompt_len={}, project={:?}", 
         prompt.len(), 
@@ -36,6 +37,7 @@ pub async fn enhance_prompt_stream(
         project_root_path: project_root_path.clone(),
         current_file_path,
         include_history: include_history.unwrap_or(true),
+        selected_history_ids,
     };
 
     // 使用流式增强
@@ -74,6 +76,7 @@ pub async fn enhance_prompt(
     project_root_path: Option<String>,
     current_file_path: Option<String>,
     include_history: Option<bool>,
+    selected_history_ids: Option<Vec<String>>,
 ) -> Result<EnhanceResponse, String> {
     log_important!(info, "收到同步增强请求: prompt_len={}", prompt.len());
 
@@ -91,6 +94,7 @@ pub async fn enhance_prompt(
         project_root_path: project_root_path.clone(),
         current_file_path,
         include_history: include_history.unwrap_or(true),
+        selected_history_ids,
     };
 
     enhancer.enhance(request)
@@ -125,7 +129,7 @@ pub async fn get_chat_history(
     let manager = ChatHistoryManager::new(&project_root_path)
         .map_err(|e| format!("创建历史管理器失败: {}", e))?;
     
-    Ok(manager.get_recent(count.unwrap_or(20)))
+    Ok(manager.get_recent_entries(count.unwrap_or(20)))
 }
 
 /// 清空对话历史

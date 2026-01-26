@@ -1,7 +1,7 @@
 // 对话历史管理模块
 // 持久化存储用户与弹窗的交互历史，供提示词增强时使用
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use anyhow::Result;
@@ -187,10 +187,32 @@ impl ChatHistoryManager {
             .collect()
     }
 
+    /// 获取最近N条对话历史（别名，便于外部调用语义统一）
+    pub fn get_recent_entries(&self, count: usize) -> Vec<ChatEntry> {
+        self.get_recent(count)
+    }
+
     /// 获取所有对话历史
     pub fn get_all(&self) -> Vec<ChatEntry> {
         let history = self.load_history();
         history.entries.into_iter().collect()
+    }
+
+    /// 根据 ID 列表获取历史（保持传入顺序）
+    pub fn get_by_ids(&self, ids: &[String]) -> Vec<ChatEntry> {
+        if ids.is_empty() {
+            return Vec::new();
+        }
+
+        let history = self.load_history();
+        let mut map: HashMap<String, ChatEntry> = HashMap::new();
+        for entry in history.entries {
+            map.insert(entry.id.clone(), entry);
+        }
+
+        ids.iter()
+            .filter_map(|id| map.get(id).cloned())
+            .collect()
     }
 
     /// 清空对话历史
@@ -224,6 +246,39 @@ impl ChatHistoryManager {
     pub fn to_api_format(&self, count: usize) -> Vec<super::types::ChatHistoryEntry> {
         let entries = self.get_recent(count);
         
+        entries.into_iter().map(|entry| {
+            super::types::ChatHistoryEntry {
+                request_message: entry.user_input.clone(),
+                request_id: entry.id.clone(),
+                request_nodes: vec![
+                    super::types::ChatHistoryRequestNode {
+                        id: 0,
+                        node_type: 0,
+                        text_node: Some(super::types::TextNode {
+                            content: entry.user_input,
+                        }),
+                    }
+                ],
+                response_nodes: vec![
+                    super::types::ChatHistoryResponseNode {
+                        id: 1,
+                        node_type: 0,
+                        content: Some(entry.ai_response_summary),
+                        tool_use: None,
+                        thinking: None,
+                        billing_metadata: None,
+                        metadata: None,
+                        token_usage: None,
+                    }
+                ],
+            }
+        }).collect()
+    }
+
+    /// 按指定 ID 转换为 chat-stream API 格式
+    pub fn to_api_format_by_ids(&self, ids: &[String]) -> Vec<super::types::ChatHistoryEntry> {
+        let entries = self.get_by_ids(ids);
+
         entries.into_iter().map(|entry| {
             super::types::ChatHistoryEntry {
                 request_message: entry.user_input.clone(),

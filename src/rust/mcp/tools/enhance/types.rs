@@ -16,6 +16,9 @@ pub struct EnhanceRequest {
     /// 是否包含对话历史
     #[serde(default = "default_include_history")]
     pub include_history: bool,
+    /// 指定参与增强的历史记录 ID（为空时使用默认最近历史）
+    #[serde(default)]
+    pub selected_history_ids: Option<Vec<String>>,
 }
 
 fn default_include_history() -> bool {

@@ -126,14 +126,22 @@ impl PromptEnhancer {
     }
 
     /// 加载对话历史
-    fn load_chat_history(&self, count: usize) -> Vec<ChatHistoryEntry> {
+    fn load_chat_history(&self, count: usize, selected_ids: Option<&[String]>) -> Vec<ChatHistoryEntry> {
         let project_root = match &self.project_root {
             Some(path) => path.clone(),
             None => return Vec::new(),
         };
 
         match ChatHistoryManager::new(&project_root) {
-            Ok(manager) => manager.to_api_format(count),
+            Ok(manager) => {
+                if let Some(ids) = selected_ids {
+                    if ids.is_empty() {
+                        return Vec::new();
+                    }
+                    return manager.to_api_format_by_ids(ids);
+                }
+                manager.to_api_format(count)
+            },
             Err(e) => {
                 log_debug!("加载对话历史失败: {}", e);
                 Vec::new()
@@ -196,15 +204,24 @@ impl PromptEnhancer {
     }
 
     /// 构建 chat-stream 请求体
-    fn build_request_payload(&self, prompt: &str, current_file: Option<&str>, include_history: bool) -> serde_json::Value {
+    fn build_request_payload(
+        &self,
+        prompt: &str,
+        current_file: Option<&str>,
+        include_history: bool,
+        selected_history_ids: Option<&[String]>,
+    ) -> serde_json::Value {
         let blob_names = self.load_blob_names();
-        let chat_history = if include_history {
-            self.load_chat_history(5) // 最多5条历史
+        // 支持按 ID 过滤对话历史，未指定则使用最近历史
+        let history_enabled = include_history
+            && selected_history_ids.map(|ids| !ids.is_empty()).unwrap_or(true);
+        let chat_history = if history_enabled {
+            self.load_chat_history(5, selected_history_ids) // 最多5条历史
         } else {
             Vec::new()
         };
 
-        let (zhi_summary, zhi_count) = if include_history {
+        let (zhi_summary, zhi_count) = if history_enabled {
             self.build_zhi_history_summary(MAX_ZHI_HISTORY_ENTRIES)
         } else {
             (String::new(), 0)
@@ -314,6 +331,7 @@ impl PromptEnhancer {
             &request.prompt,
             request.current_file_path.as_deref(),
             request.include_history,
+            request.selected_history_ids.as_deref(),
         );
 
         let blob_count = payload.get("blobs")
@@ -408,6 +426,7 @@ impl PromptEnhancer {
             &request.prompt,
             request.current_file_path.as_deref(),
             request.include_history,
+            request.selected_history_ids.as_deref(),
         );
 
         let blob_count = payload.get("blobs")
