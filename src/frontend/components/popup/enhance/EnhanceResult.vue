@@ -9,6 +9,10 @@ interface Props {
   enhancedPrompt: string
   progress: number
   statusText: string
+  projectRootPath: string
+  blobCount: number | null
+  historyCount: number | null
+  blobSourceRoot: string
 }
 
 const props = defineProps<Props>()
@@ -31,6 +35,24 @@ const statusIconClass = computed(() => {
 })
 
 const showSkeleton = computed(() => props.isEnhancing && !props.streamContent)
+
+const blobCountText = computed(() => {
+  if (props.blobCount === null) return '未返回'
+  return `已加载 ${props.blobCount} 个代码块`
+})
+
+const historyCountText = computed(() => {
+  if (props.historyCount === null) return '未返回'
+  return `已加载 ${props.historyCount} 条记录`
+})
+
+const showSourceRoot = computed(() => {
+  return !!props.blobSourceRoot
+})
+
+const sourceMismatch = computed(() => {
+  return !!props.blobSourceRoot && !!props.projectRootPath && props.blobSourceRoot !== props.projectRootPath
+})
 </script>
 
 <template>
@@ -41,6 +63,34 @@ const showSkeleton = computed(() => props.isEnhancing && !props.streamContent)
         <span>{{ statusText }}</span>
       </div>
       <span v-if="isEnhancing" class="text-slate-500 dark:text-slate-400">{{ progress }}%</span>
+    </div>
+
+    <!-- 诊断信息：项目路径与上下文统计 -->
+    <div class="mb-3 space-y-1 text-xs text-slate-600 dark:text-slate-300">
+      <div class="flex items-start gap-2">
+        <div class="i-carbon-folder h-3.5 w-3.5 text-slate-400" />
+        <span class="text-slate-500 dark:text-slate-400">项目：</span>
+        <span class="break-all text-slate-700 dark:text-slate-200">
+          {{ projectRootPath || '未提供项目路径' }}
+        </span>
+      </div>
+      <div class="flex items-center gap-2">
+        <div class="i-carbon-package h-3.5 w-3.5 text-slate-400" />
+        <span class="text-slate-500 dark:text-slate-400">代码上下文：</span>
+        <span class="text-slate-700 dark:text-slate-200">{{ blobCountText }}</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <div class="i-carbon-chat h-3.5 w-3.5 text-slate-400" />
+        <span class="text-slate-500 dark:text-slate-400">对话历史：</span>
+        <span class="text-slate-700 dark:text-slate-200">{{ historyCountText }}</span>
+      </div>
+      <div v-if="showSourceRoot" class="flex items-start gap-2 text-[11px] text-amber-600 dark:text-amber-300">
+        <div class="i-carbon-information h-3.5 w-3.5" />
+        <span class="text-slate-500 dark:text-slate-400">
+          索引来源{{ sourceMismatch ? '（与项目路径不一致）' : '' }}：
+        </span>
+        <span class="break-all">{{ blobSourceRoot }}</span>
+      </div>
     </div>
 
     <n-progress

@@ -82,47 +82,87 @@ impl PromptEnhancer {
         Self::new(&base_url, &token)
     }
 
-    /// 加载项目的 blob_names
-    fn load_blob_names(&self) -> Vec<String> {
+    /// 加载项目的 blob_names（返回匹配到的项目根路径）
+    fn load_blob_names(&self) -> (Vec<String>, Option<String>) {
         let project_root = match &self.project_root {
             Some(path) => path.clone(),
-            None => return Vec::new(),
+            None => return (Vec::new(), None),
         };
 
-        let projects_path = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".sanshu")
-            .join("projects.json");
-
-        if !projects_path.exists() {
-            log_debug!("projects.json 不存在，跳过 blob 加载");
-            return Vec::new();
-        }
-
-        let content = match fs::read_to_string(&projects_path) {
-            Ok(c) => c,
-            Err(e) => {
-                log_debug!("读取 projects.json 失败: {}", e);
-                return Vec::new();
-            }
-        };
-
-        let projects: ProjectsFile = match serde_json::from_str(&content) {
-            Ok(p) => p,
-            Err(e) => {
-                log_debug!("解析 projects.json 失败: {}", e);
-                return Vec::new();
-            }
-        };
-
-        // 规范化项目路径
+        // 规范化项目路径（去除末尾斜杠，避免匹配失败）
         let normalized_root = PathBuf::from(&project_root)
             .canonicalize()
             .unwrap_or_else(|_| PathBuf::from(&project_root))
             .to_string_lossy()
             .replace('\\', "/");
+        let normalized_root = normalized_root.trim_end_matches('/').to_string();
 
-        projects.0.get(&normalized_root).cloned().unwrap_or_default()
+        // 优先读取 acemcp 的 projects.json，兼容旧的 .sanshu/projects.json
+        let mut candidates = Vec::new();
+        let acemcp_projects = crate::mcp::tools::acemcp::mcp::home_projects_file();
+        candidates.push(acemcp_projects);
+        let legacy_projects = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".sanshu")
+            .join("projects.json");
+        if !candidates.iter().any(|p| p == &legacy_projects) {
+            candidates.push(legacy_projects);
+        }
+
+        for projects_path in candidates {
+            if !projects_path.exists() {
+                log_debug!("projects.json 不存在，跳过 blob 加载: {:?}", projects_path);
+                continue;
+            }
+
+            let content = match fs::read_to_string(&projects_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    log_debug!("读取 projects.json 失败: {}", e);
+                    continue;
+                }
+            };
+
+            let projects: ProjectsFile = match serde_json::from_str(&content) {
+                Ok(p) => p,
+                Err(e) => {
+                    log_debug!("解析 projects.json 失败: {}", e);
+                    continue;
+                }
+            };
+
+            if let Some((names, matched_root)) = Self::find_project_blobs(&projects, &normalized_root) {
+                log_debug!(
+                    "已加载 blob_names: count={}, source_root={}",
+                    names.len(),
+                    matched_root
+                );
+                return (names, Some(matched_root));
+            }
+        }
+
+        log_debug!("未在 projects.json 中匹配到项目: {}", normalized_root);
+        (Vec::new(), None)
+    }
+
+    /// 查找项目根路径对应的 blob 列表（兼容 Windows 大小写差异）
+    fn find_project_blobs(
+        projects: &ProjectsFile,
+        normalized_root: &str,
+    ) -> Option<(Vec<String>, String)> {
+        if let Some(names) = projects.0.get(normalized_root) {
+            return Some((names.clone(), normalized_root.to_string()));
+        }
+
+        if cfg!(windows) {
+            for (key, names) in projects.0.iter() {
+                if key.eq_ignore_ascii_case(normalized_root) {
+                    return Some((names.clone(), key.clone()));
+                }
+            }
+        }
+
+        None
     }
 
     /// 加载对话历史
@@ -210,8 +250,8 @@ impl PromptEnhancer {
         current_file: Option<&str>,
         include_history: bool,
         selected_history_ids: Option<&[String]>,
+        blob_names: &[String],
     ) -> serde_json::Value {
-        let blob_names = self.load_blob_names();
         // 支持按 ID 过滤对话历史，未指定则使用最近历史
         let history_enabled = include_history
             && selected_history_ids.map(|ids| !ids.is_empty()).unwrap_or(true);
@@ -327,18 +367,18 @@ impl PromptEnhancer {
 
     /// 同步增强（等待完成后返回）
     pub async fn enhance(&self, request: EnhanceRequest) -> Result<EnhanceResponse> {
+        // 预加载 blob 信息，便于返回给前端展示来源与数量
+        let (blob_names, blob_source_root) = self.load_blob_names();
+        let blob_count = blob_names.len();
+        let project_root_path = request.project_root_path.clone().or(self.project_root.clone());
+
         let payload = self.build_request_payload(
             &request.prompt,
             request.current_file_path.as_deref(),
             request.include_history,
             request.selected_history_ids.as_deref(),
+            &blob_names,
         );
-
-        let blob_count = payload.get("blobs")
-            .and_then(|b| b.get("added_blobs"))
-            .and_then(|a| a.as_array())
-            .map(|a| a.len())
-            .unwrap_or(0);
 
         let history_count = payload.get("chat_history")
             .and_then(|h| h.as_array())
@@ -366,6 +406,8 @@ impl PromptEnhancer {
                 error: Some(format!("HTTP {} - {}", status, body)),
                 blob_count,
                 history_count,
+                project_root_path,
+                blob_source_root,
             });
         }
 
@@ -414,6 +456,8 @@ impl PromptEnhancer {
             error: if success { None } else { Some("未能从响应中提取增强结果".to_string()) },
             blob_count,
             history_count,
+            project_root_path,
+            blob_source_root,
         })
     }
 
@@ -422,18 +466,18 @@ impl PromptEnhancer {
     where
         F: FnMut(EnhanceStreamEvent) + Send,
     {
+        // 预加载 blob 信息，便于返回给前端展示来源与数量
+        let (blob_names, blob_source_root) = self.load_blob_names();
+        let blob_count = blob_names.len();
+        let project_root_path = request.project_root_path.clone().or(self.project_root.clone());
+
         let payload = self.build_request_payload(
             &request.prompt,
             request.current_file_path.as_deref(),
             request.include_history,
             request.selected_history_ids.as_deref(),
+            &blob_names,
         );
-
-        let blob_count = payload.get("blobs")
-            .and_then(|b| b.get("added_blobs"))
-            .and_then(|a| a.as_array())
-            .map(|a| a.len())
-            .unwrap_or(0);
 
         let history_count = payload.get("chat_history")
             .and_then(|h| h.as_array())
@@ -463,6 +507,8 @@ impl PromptEnhancer {
                 error: Some(error_msg),
                 blob_count,
                 history_count,
+                project_root_path,
+                blob_source_root,
             });
         }
 
@@ -546,6 +592,8 @@ impl PromptEnhancer {
             error: if success { None } else { Some("未能从响应中提取增强结果".to_string()) },
             blob_count,
             history_count,
+            project_root_path,
+            blob_source_root,
         })
     }
 }

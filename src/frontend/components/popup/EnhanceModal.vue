@@ -34,6 +34,17 @@ interface EnhanceStreamEvent {
   progress: number
 }
 
+interface EnhanceResponse {
+  enhanced_prompt: string
+  original_prompt: string
+  success: boolean
+  error?: string | null
+  blob_count?: number
+  history_count?: number
+  project_root_path?: string | null
+  blob_source_root?: string | null
+}
+
 interface EnhanceConfig {
   includeContext: boolean
   includeHistory: boolean
@@ -81,6 +92,11 @@ const historyEntries = ref<ChatHistoryEntry[]>([])
 const historyLoading = ref(false)
 const historyError = ref('')
 const historySelectionTouched = ref(false)
+// 后端诊断信息（项目路径与上下文数量）
+const blobCount = ref<number | null>(null)
+const historyCount = ref<number | null>(null)
+const responseProjectRoot = ref('')
+const blobSourceRoot = ref('')
 
 // 事件监听器
 let unlisten: UnlistenFn | null = null
@@ -113,6 +129,10 @@ const finalPrompt = computed(() => {
 
   return parts.join('\n\n')
 })
+
+// 优先使用后端回显的项目路径，确保诊断信息一致
+const displayProjectRoot = computed(() => responseProjectRoot.value || props.projectRootPath || '')
+const displayBlobSourceRoot = computed(() => blobSourceRoot.value || '')
 
 const canConfirm = computed(() => hasCompleted.value && enhancedPrompt.value.length > 0)
 const statusText = computed(() => {
@@ -153,6 +173,10 @@ function resetEnhanceState() {
   progress.value = 0
   errorMessage.value = ''
   hasCompleted.value = false
+  blobCount.value = null
+  historyCount.value = null
+  responseProjectRoot.value = ''
+  blobSourceRoot.value = ''
 }
 
 // 重置配置（保持默认值）
@@ -305,14 +329,25 @@ async function startEnhance() {
       ? (historySelectionTouched.value ? config.value.selectedHistoryIds : null)
       : null
 
-    // 调用后端增强
-    await invoke('enhance_prompt_stream', {
+    // 调用后端增强并记录诊断信息
+    const response = await invoke('enhance_prompt_stream', {
       prompt: finalPrompt.value,
       projectRootPath: props.projectRootPath || null,
       currentFilePath: props.currentFilePath || null,
       includeHistory: config.value.includeHistory,
       selectedHistoryIds,
-    })
+    }) as EnhanceResponse
+
+    if (response) {
+      blobCount.value = typeof response.blob_count === 'number' ? response.blob_count : null
+      historyCount.value = typeof response.history_count === 'number' ? response.history_count : null
+      responseProjectRoot.value = response.project_root_path || props.projectRootPath || ''
+      blobSourceRoot.value = response.blob_source_root || ''
+
+      if (response.success === false && response.error && !errorMessage.value) {
+        errorMessage.value = response.error
+      }
+    }
   }
   catch (error) {
     console.error('增强失败:', error)
@@ -457,6 +492,10 @@ onUnmounted(() => {
         :enhanced-prompt="enhancedPrompt"
         :progress="progress"
         :status-text="statusText"
+        :project-root-path="displayProjectRoot"
+        :blob-count="blobCount"
+        :history-count="historyCount"
+        :blob-source-root="displayBlobSourceRoot"
       />
 
       <!-- 操作按钮区 -->

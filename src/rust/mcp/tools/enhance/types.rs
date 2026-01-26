@@ -43,6 +43,12 @@ pub struct EnhanceResponse {
     /// 使用的对话历史条数
     #[serde(default)]
     pub history_count: usize,
+    /// 请求传入的项目根路径（可选）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_root_path: Option<String>,
+    /// 实际匹配到的项目根路径（用于确认上下文来源）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blob_source_root: Option<String>,
 }
 
 /// 流式增强事件（通过 Tauri Event 推送给前端）

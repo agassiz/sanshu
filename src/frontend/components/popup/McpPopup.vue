@@ -477,6 +477,11 @@ function handleOpenMcpToolsTab() {
           />
         </div>
       </div>
+      <!-- 项目根目录显示，便于确认上下文来源 -->
+      <div class="mt-1 text-[11px] text-white/70">
+        <span class="text-white/50">项目：</span>
+        <span class="break-all text-white/90">{{ request?.project_root_path }}</span>
+      </div>
     </div>
 
     <!-- 内容区域 - 可滚动 -->
