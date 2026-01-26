@@ -737,8 +737,24 @@ fn replace_all_files_windows(
     // 脚本头部：设置编码和关闭回显
     script_lines.push("@echo off".to_string());
     script_lines.push("chcp 65001 >nul".to_string());
+    script_lines.push("setlocal enabledelayedexpansion".to_string());
     script_lines.push("echo 正在更新 sanshu...".to_string());
-    script_lines.push("timeout /t 2 /nobreak >nul".to_string());
+    // 等待应用进程退出，避免可执行文件被占用导致更新失败
+    script_lines.push("timeout /t 5 /nobreak >nul".to_string());
+    script_lines.push(format!("set \"APP_EXE={}\"", exe_name));
+    script_lines.push("set /a WAIT_MAX=30".to_string());
+    script_lines.push("set /a WAIT_SEC=0".to_string());
+    script_lines.push("echo 等待应用进程退出：%APP_EXE%".to_string());
+    script_lines.push(":wait_app_exit".to_string());
+    script_lines.push("tasklist /FI \"IMAGENAME eq %APP_EXE%\" | find /I \"%APP_EXE%\" >nul".to_string());
+    script_lines.push("if errorlevel 1 goto wait_done".to_string());
+    script_lines.push("if !WAIT_SEC! GEQ !WAIT_MAX! goto wait_timeout".to_string());
+    script_lines.push("timeout /t 1 /nobreak >nul".to_string());
+    script_lines.push("set /a WAIT_SEC+=1".to_string());
+    script_lines.push("goto wait_app_exit".to_string());
+    script_lines.push(":wait_timeout".to_string());
+    script_lines.push("echo 等待超时，继续尝试更新...".to_string());
+    script_lines.push(":wait_done".to_string());
     script_lines.push("".to_string());
 
     // 备份和复制每个文件
