@@ -1,5 +1,5 @@
 <script setup lang="ts">
-<script setup lang="ts">
+// 修复重复的 script setup 声明，避免 SFC 解析错误
 import type { CustomPrompt } from '../../types/popup'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
