@@ -76,7 +76,7 @@ src-tauri/Cargo.lock
 temp/
 scripts/
 *.exe
-*.md
+# *.md
 !ACEMCP.md
 !README.md
 !INSTALL.md
