@@ -489,27 +489,30 @@ function handleOpenMcpToolsTab() {
       </div>
     </div>
 
-    <!-- UI/UX 上下文策略指示器（仅在有策略信息时显示） -->
+    <!-- UI/UX 上下文策略指示器（全局提示，便于统一感知） -->
     <div
       v-if="showPolicyIndicator"
-      class="mx-2 mt-2 px-3 py-2 bg-black-100 rounded-lg border border-gray-700/50"
+      class="mx-2 mt-2 px-3 py-2.5 bg-black-100/90 rounded-xl border border-gray-700/60"
     >
       <n-tooltip trigger="hover" placement="bottom">
         <template #trigger>
-          <div class="flex flex-col gap-1 text-xs cursor-help">
+          <div class="flex flex-col gap-1.5 text-xs cursor-help">
             <div class="flex items-center gap-2">
               <div :class="[policyStatus.icon, policyStatus.colorClass]" class="w-4 h-4" />
-              <span class="text-white/80">上下文策略：</span>
+              <span class="text-white/80">UI/UX 追加：</span>
               <span :class="policyStatus.colorClass" class="font-medium">{{ policyStatus.label }}</span>
             </div>
-            <!-- 未追加时直接展示原因，减少误解 -->
-            <div v-if="!policyStatus.allowed" class="text-[11px] text-white/70">
+            <!-- 全局提示时始终展示原因，避免默认策略被误解 -->
+            <div
+              class="text-[11px] leading-4"
+              :class="policyStatus.allowed ? 'text-white/65' : 'text-yellow-200/80'"
+            >
               {{ policyStatus.reason }}
             </div>
           </div>
         </template>
         <div class="text-xs space-y-1 max-w-[280px]">
-          <div class="font-medium">UI/UX 上下文追加策略</div>
+          <div class="font-medium">UI/UX 上下文策略详情</div>
           <div>{{ policyStatus.reason }}</div>
           <div class="text-white/60 pt-1 border-t border-white/10">
             意图：{{ policyStatus.intent }} · 策略：{{ policyStatus.policy }}

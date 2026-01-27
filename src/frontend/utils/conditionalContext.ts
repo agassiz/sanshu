@@ -42,6 +42,8 @@ export function getContextPolicyStatus(request?: McpRequest | null): ContextPoli
   const intent = request?.uiux_intent ?? 'none'
   const policy = request?.uiux_context_policy ?? 'auto'
   const reason = request?.uiux_reason
+  // 记录是否显式传入 UI/UX 上下文信号，便于区分默认与显式策略
+  const hasExplicitSignal = !!(request?.uiux_intent || request?.uiux_context_policy || request?.uiux_reason)
 
   // 判断是否允许追加上下文
   const isForbidden = policy === 'forbid'
@@ -64,8 +66,10 @@ export function getContextPolicyStatus(request?: McpRequest | null): ContextPoli
     // 自动策略下因无意图而阻止
     icon = 'i-carbon-warning'
     colorClass = 'text-yellow-400'
-    label = '上下文未追加'
-    generatedReason = reason || '当前无 UI/UX 相关意图，未追加条件性上下文'
+    label = hasExplicitSignal ? '上下文未追加' : '上下文默认未追加'
+    generatedReason = reason || (hasExplicitSignal
+      ? '当前无 UI/UX 相关意图，未追加条件性上下文'
+      : '未传入 UI/UX 上下文信号，按默认策略未追加')
   } else if (policy === 'force') {
     // 强制追加
     icon = 'i-carbon-checkmark-filled'
@@ -94,12 +98,12 @@ export function getContextPolicyStatus(request?: McpRequest | null): ContextPoli
 /**
  * 判断是否应该显示策略指示器
  * @param request MCP 请求对象
- * @returns 当存在有效的 uiux_intent 或非 auto 策略时返回 true
+ * @returns 只要弹窗存在请求就显示策略指示器（全局提示）
  */
 export function shouldShowPolicyIndicator(request?: McpRequest | null): boolean {
   if (!request) return false
-  // 只要显式传入 UI/UX 上下文信号，就展示指示器，避免默认值掩盖未追加原因
-  return !!request.uiux_intent || !!request.uiux_context_policy || !!request.uiux_reason
+  // 全局提示：即使未传入 UI/UX 参数，也展示当前默认策略状态
+  return true
 }
 
 // 复用条件性 prompt 的上下文拼接逻辑，保持与弹窗输入一致
