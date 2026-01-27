@@ -146,7 +146,7 @@ onMounted(async () => {
     >
       <!-- 骨架屏占位 (加载时显示) -->
       <template v-if="loading">
-        <n-grid-item v-for="n in 8" :key="n" span="4 s:2 m:2 l:1">
+        <n-grid-item v-for="n in 8" :key="'skeleton-' + n" span="4 s:2 m:2 l:1">
           <FeatureCard :loading="true" />
         </n-grid-item>
       </template>
@@ -155,7 +155,7 @@ onMounted(async () => {
       <template v-else>
         <n-grid-item
           v-for="(feature, index) in features"
-          :key="index"
+          :key="'feature-' + index"
           span="4 s:2 m:2 l:1"
         >
           <FeatureCard :feature="feature" />
