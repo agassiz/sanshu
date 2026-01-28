@@ -8,7 +8,7 @@
  * 3. 智能降级：根据 sou 启用状态和 ACE 配置状态显示不同引导
  */
 import type { ProjectIndexStatus } from '../../types/tauri'
-import { computed, ref } from 'vue'
+import { computed, h, ref } from 'vue'
 
 // ==================== Props & Emits ====================
 
@@ -83,9 +83,9 @@ const statusIcon = computed(() => {
 // 状态文案
 const statusText = computed(() => {
   const status = props.projectStatus?.status
-  switch (status) {
-    case 'idle':
-      return '未索引'
+    switch (status) {
+      case 'idle':
+        return '空闲'
     case 'indexing':
       return `索引中 ${props.projectStatus?.progress || 0}%`
     case 'synced':
@@ -213,7 +213,7 @@ function handleOpenDetail() {
           <!-- 分隔符 -->
           <span class="status-divider">·</span>
           <!-- 文件数 -->
-          <span class="status-files">{{ indexedFiles }} 个文件</span>
+          <span class="status-files">{{ totalFiles }} 个文件</span>
           <!-- 最后同步时间（如有） -->
           <template v-if="lastSyncTime">
             <span class="status-divider">·</span>
@@ -245,12 +245,12 @@ function handleOpenDetail() {
               <div class="stat-label">已索引</div>
             </div>
             <!-- 待处理（仅在有值时显示） -->
-            <div v-if="pendingFiles > 0" class="stat-card stat-card--info">
+            <div class="stat-card stat-card--info">
               <div class="stat-value">{{ pendingFiles }}</div>
               <div class="stat-label">待处理</div>
             </div>
             <!-- 失败（仅在有值时显示） -->
-            <div v-if="failedFiles > 0" class="stat-card stat-card--error">
+            <div class="stat-card stat-card--error">
               <div class="stat-value">{{ failedFiles }}</div>
               <div class="stat-label">失败</div>
             </div>
@@ -297,12 +297,6 @@ function handleOpenDetail() {
     </div>
   </div>
 </template>
-
-<script lang="ts">
-// h 函数导入用于下拉菜单图标渲染
-import { h } from 'vue'
-export default {}
-</script>
 
 <style scoped>
 /* ==================== 面板容器 ==================== */

@@ -487,8 +487,8 @@ async function handleIndexResync(type: 'incremental' | 'full') {
 
   resyncLoading.value = true
   try {
-    // 目前统一使用增量同步（全量重建需要后端支持，可后续扩展）
-    const result = await triggerIndexUpdate(props.request.project_root_path)
+    // 根据类型触发增量同步 / 全量重建
+    const result = await triggerIndexUpdate(props.request.project_root_path, type)
     message.success(typeof result === 'string' ? result : `${type === 'full' ? '全量重建' : '增量同步'}已触发`)
   }
   catch (error) {

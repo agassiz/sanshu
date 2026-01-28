@@ -89,10 +89,13 @@ export function useAcemcpSync() {
     }
   }
 
-  // 手动触发索引更新
-  async function triggerIndexUpdate(projectRoot: string) {
+  // 手动触发索引更新（增量/全量）
+  async function triggerIndexUpdate(projectRoot: string, mode: 'incremental' | 'full' = 'incremental') {
     try {
-      const result = await invoke<string>('trigger_acemcp_index_update', {
+      const command = mode === 'full'
+        ? 'trigger_acemcp_index_rebuild'
+        : 'trigger_acemcp_index_update'
+      const result = await invoke<string>(command, {
         projectRootPath: projectRoot,
       })
       // 立即刷新状态

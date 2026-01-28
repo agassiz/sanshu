@@ -597,6 +597,19 @@ pub async fn trigger_acemcp_index_update(project_root_path: String) -> Result<St
         .map_err(|e| e.to_string())
 }
 
+/// 手动触发索引全量重建
+/// 先清理本地索引记录，再重新触发索引
+#[tauri::command]
+pub async fn trigger_acemcp_index_rebuild(project_root_path: String) -> Result<String, String> {
+    // 先清理本地索引记录（projects.json + projects_status.json）
+    remove_acemcp_project_index(project_root_path.clone()).await?;
+
+    // 再触发索引更新（全量重建）
+    AcemcpTool::trigger_index_update(project_root_path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// 获取全局自动索引开关状态
 #[tauri::command]
 pub fn get_auto_index_enabled() -> Result<bool, String> {
