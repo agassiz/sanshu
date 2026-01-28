@@ -296,18 +296,26 @@ async function startEnhance() {
   isEnhancing.value = true
 
   try {
+    // 进度锁定标志：complete 事件后锁定，防止后续 chunk 事件重置进度
+    let completeLock = false
+
     // 设置事件监听
     unlisten = await listen<EnhanceStreamEvent>('enhance-stream', (event) => {
       const data = event.payload
 
       switch (data.event_type) {
         case 'chunk':
-          if (data.accumulated_text) {
-            streamContent.value = data.accumulated_text
+          // 锁定后忽略 chunk 事件的进度更新，防止进度条重置
+          if (!completeLock) {
+            if (data.accumulated_text) {
+              streamContent.value = data.accumulated_text
+            }
+            progress.value = data.progress
           }
-          progress.value = data.progress
           break
         case 'complete':
+          // 锁定进度，防止后续 chunk 事件影响
+          completeLock = true
           if (data.enhanced_prompt) {
             enhancedPrompt.value = data.enhanced_prompt
           }
@@ -319,6 +327,7 @@ async function startEnhance() {
           isEnhancing.value = false
           break
         case 'error':
+          completeLock = true // 错误状态也锁定
           errorMessage.value = data.error || '未知错误'
           isEnhancing.value = false
           break

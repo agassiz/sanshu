@@ -36,6 +36,11 @@ const statusIconClass = computed(() => {
 
 const showSkeleton = computed(() => props.isEnhancing && !props.streamContent)
 
+// 判断是否有需要显示的内容（用于控制滚动区域渲染）
+const hasContent = computed(() => {
+  return props.errorMessage || (props.hasCompleted && props.enhancedPrompt) || props.streamContent || showSkeleton.value
+})
+
 const blobCountText = computed(() => {
   if (props.blobCount === null) return '未返回'
   return `已加载 ${props.blobCount} 个代码块`
@@ -103,30 +108,57 @@ const sourceMismatch = computed(() => {
       status="info"
     />
 
-    <div class="mt-3">
-      <div v-if="errorMessage" class="text-sm text-rose-600 dark:text-rose-200">
-        ❌ {{ errorMessage }}
-      </div>
+    <!-- 内容展示区域：添加滚动控制和渐变遮罩 -->
+    <div class="relative mt-3">
+      <!-- 使用 n-scrollbar 包裹内容区域，max-h-[300px] 限制高度 -->
+      <n-scrollbar v-if="hasContent" class="max-h-[300px]">
+        <div class="pr-2 pb-6">
+          <!-- 错误状态：优化为卡片样式 -->
+          <div
+            v-if="errorMessage"
+            class="flex items-start gap-2 rounded-lg p-3 bg-rose-50/80 border border-rose-200/60 dark:bg-rose-900/30 dark:border-rose-700/40"
+          >
+            <div class="i-carbon-warning-alt h-4 w-4 text-rose-500 mt-0.5 shrink-0" />
+            <span class="text-sm text-rose-700 dark:text-rose-200">{{ errorMessage }}</span>
+          </div>
 
-      <div v-else-if="hasCompleted && enhancedPrompt" class="whitespace-pre-wrap text-sm text-emerald-700 dark:text-emerald-200">
-        {{ enhancedPrompt }}
-      </div>
+          <!-- 成功状态：增强完成后的结果 -->
+          <div
+            v-else-if="hasCompleted && enhancedPrompt"
+            class="whitespace-pre-wrap text-sm text-emerald-700 dark:text-emerald-200"
+          >
+            {{ enhancedPrompt }}
+          </div>
 
-      <div v-else-if="streamContent" class="whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-200">
-        {{ streamContent }}
-        <span v-if="isEnhancing" class="ml-1 inline-block h-4 w-2 animate-pulse rounded-sm bg-slate-400" />
-      </div>
+          <!-- 流式内容：实时显示增强过程 -->
+          <div
+            v-else-if="streamContent"
+            class="whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-200"
+          >
+            {{ streamContent }}
+            <span v-if="isEnhancing" class="ml-1 inline-block h-4 w-2 animate-pulse rounded-sm bg-slate-400" />
+          </div>
 
-      <div v-else-if="showSkeleton" class="space-y-2">
-        <n-skeleton height="14px" width="80%" class="animate-pulse" />
-        <n-skeleton height="14px" width="92%" class="animate-pulse" />
-        <n-skeleton height="14px" width="88%" class="animate-pulse" />
-      </div>
+          <!-- 骨架屏：等待流式内容开始 -->
+          <div v-else-if="showSkeleton" class="space-y-2">
+            <n-skeleton height="14px" width="80%" class="animate-pulse" />
+            <n-skeleton height="14px" width="92%" class="animate-pulse" />
+            <n-skeleton height="14px" width="88%" class="animate-pulse" />
+          </div>
+        </div>
+      </n-scrollbar>
 
+      <!-- 初始状态：准备中 -->
       <div v-else class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
         <n-spin size="small" />
         正在准备增强...
       </div>
+
+      <!-- 底部渐变遮罩：提示内容可继续滚动 -->
+      <div
+        v-if="hasContent"
+        class="pointer-events-none absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-white/90 to-transparent dark:from-slate-900/90"
+      />
     </div>
   </div>
 </template>
