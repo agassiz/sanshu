@@ -227,6 +227,15 @@ pub async fn download_and_install_update(app: AppHandle, state: State<'_, AppSta
         Ok(_) => {
             log::info!("✅ 更新下载和安装成功");
             let _ = app.emit("update_install_finished", ());
+            
+            // Windows 平台：发送自动退出事件，让前端显示倒计时并自动退出
+            // 这样批处理脚本才能检测到进程退出并完成文件替换
+            #[cfg(target_os = "windows")]
+            {
+                log::info!("🔄 Windows 平台：应用将在3秒后自动退出以完成更新");
+                let _ = app.emit("update_auto_exit", 3i32); // 3秒后退出
+            }
+            
             Ok(())
         }
         Err(e) => {
@@ -256,6 +265,36 @@ pub async fn get_current_version(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub async fn restart_app(app: AppHandle) -> Result<(), String> {
     app.restart();
+}
+
+/// 更新后退出应用（专门用于 Windows 更新流程）
+/// 
+/// 与 restart_app 不同，此函数会完全退出进程，让批处理脚本能够检测到进程退出
+/// 并执行文件替换和自动重启
+#[tauri::command]
+pub async fn exit_for_update() -> Result<(), String> {
+    log::info!("🔄 更新完成，应用即将退出以完成文件替换...");
+    // 使用延迟退出，让前端有时间显示提示
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        log::info!("👋 应用退出，批处理脚本将自动完成更新并重启");
+        std::process::exit(0);
+    });
+    Ok(())
+}
+
+/// 获取当前平台信息
+#[tauri::command]
+pub fn get_platform_info() -> String {
+    if cfg!(target_os = "windows") {
+        "windows".to_string()
+    } else if cfg!(target_os = "macos") {
+        "macos".to_string()
+    } else if cfg!(target_os = "linux") {
+        "linux".to_string()
+    } else {
+        "unknown".to_string()
+    }
 }
 
 /// 获取当前平台对应的下载URL

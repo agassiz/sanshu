@@ -92,6 +92,10 @@ const updateStatus = ref<'idle' | 'checking' | 'downloading' | 'installing' | 'c
 // 自动更新弹窗状态
 const showUpdateModal = ref(false)
 const autoCheckEnabled = ref(true)
+// 平台信息（用于区分 Windows 和其他平台的更新流程）
+const platformInfo = ref<string>('unknown')
+// 自动退出倒计时（Windows 平台更新完成后使用）
+const autoExitCountdown = ref(0)
 // 记录用户取消的版本，避免重复弹窗（持久化存储）
 const cancelledVersions = ref<Set<string>>(loadCancelledVersions())
 
@@ -425,6 +429,59 @@ async function restartApp(): Promise<void> {
   }
 }
 
+// 更新后退出应用（专门用于 Windows 更新流程）
+// 与 restartApp 不同，此函数会完全退出进程，让批处理脚本能够检测到进程退出
+async function exitForUpdate(): Promise<void> {
+  try {
+    console.log('🔄 调用 exit_for_update，应用即将退出...')
+    await invoke('exit_for_update')
+  }
+  catch (error) {
+    console.error('退出应用失败:', error)
+    throw error
+  }
+}
+
+// 获取平台信息
+async function getPlatformInfo(): Promise<string> {
+  try {
+    const platform = await invoke('get_platform_info') as string
+    platformInfo.value = platform
+    return platform
+  }
+  catch (error) {
+    console.error('获取平台信息失败:', error)
+    return 'unknown'
+  }
+}
+
+// 设置自动退出事件监听器（Windows 平台更新完成后使用）
+async function setupAutoExitListener(): Promise<() => void> {
+  const unlisten = await listen('update_auto_exit', (event) => {
+    const seconds = event.payload as number
+    console.log(`🔄 收到自动退出事件，应用将在 ${seconds} 秒后自动退出...`)
+    
+    // 设置倒计时
+    autoExitCountdown.value = seconds
+    
+    // 开始倒计时
+    const timer = setInterval(() => {
+      autoExitCountdown.value--
+      console.log(`⏱️ 倒计时: ${autoExitCountdown.value}s`)
+      
+      if (autoExitCountdown.value <= 0) {
+        clearInterval(timer)
+        console.log('🔚 倒计时结束，调用 exitForUpdate...')
+        exitForUpdate().catch((err) => {
+          console.error('自动退出失败:', err)
+        })
+      }
+    }, 1000)
+  })
+  
+  return unlisten
+}
+
 // 关闭更新弹窗
 function closeUpdateModal() {
   showUpdateModal.value = false
@@ -467,7 +524,9 @@ export function useVersionCheck() {
     updateStatus,
     showUpdateModal,
     autoCheckEnabled,
-    networkStatus, // 新增：网络状态
+    networkStatus, // 网络状态
+    platformInfo, // 新增：平台信息
+    autoExitCountdown, // 新增：自动退出倒计时
     checkLatestVersion,
     autoCheckUpdate,
     silentCheckUpdate,
@@ -477,6 +536,9 @@ export function useVersionCheck() {
     checkForUpdatesWithTauri,
     performOneClickUpdate,
     restartApp,
+    exitForUpdate, // 新增：更新后退出
+    getPlatformInfo, // 新增：获取平台信息
+    setupAutoExitListener, // 新增：设置自动退出监听器
     closeUpdateModal,
     dismissUpdate,
     manualCheckUpdate,

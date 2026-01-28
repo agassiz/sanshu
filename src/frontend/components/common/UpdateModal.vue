@@ -2,7 +2,7 @@
 import hljs from 'highlight.js'
 import MarkdownIt from 'markdown-it'
 import { useMessage } from 'naive-ui'
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useVersionCheck } from '../../composables/useVersionCheck'
 
 const props = defineProps<Props>()
@@ -50,10 +50,38 @@ const {
   updateStatus,
   updateProgress,
   networkStatus,
+  platformInfo,
+  autoExitCountdown,
   performOneClickUpdate,
   restartApp,
+  exitForUpdate,
+  getPlatformInfo,
+  setupAutoExitListener,
   dismissUpdate,
 } = useVersionCheck()
+
+// 判断是否为 Windows 平台
+const isWindows = computed(() => platformInfo.value === 'windows')
+
+// 自动退出监听器清理函数
+let unlistenAutoExit: (() => void) | null = null
+
+// 组件挂载时初始化
+onMounted(async () => {
+  // 获取平台信息
+  await getPlatformInfo()
+  
+  // 设置自动退出监听器（仅 Windows 平台需要）
+  unlistenAutoExit = await setupAutoExitListener()
+})
+
+// 组件卸载时清理
+onUnmounted(() => {
+  if (unlistenAutoExit) {
+    unlistenAutoExit()
+    unlistenAutoExit = null
+  }
+})
 
 // 网络状态面板展开状态
 const showNetworkDetails = ref(false)
@@ -174,7 +202,7 @@ function handleDismiss() {
   message.info('已关闭更新提醒')
 }
 
-// 重启应用
+// 重启应用（非 Windows 平台使用）
 async function handleRestart() {
   try {
     await restartApp()
@@ -182,6 +210,18 @@ async function handleRestart() {
   catch (error) {
     console.error('重启失败:', error)
     message.error('重启失败，请手动重启应用')
+  }
+}
+
+// 手动触发退出更新（Windows 平台使用，当用户点击按钮时）
+async function handleExitForUpdate() {
+  try {
+    message.info('正在完成更新，应用即将退出...')
+    await exitForUpdate()
+  }
+  catch (error) {
+    console.error('退出失败:', error)
+    message.error('退出失败，请手动关闭应用完成更新')
   }
 }
 </script>
@@ -379,9 +419,22 @@ async function handleRestart() {
           立即更新
         </n-button>
 
-        <!-- 重启按钮 -->
+        <!-- Windows 平台：自动退出倒计时按钮 -->
         <n-button
-          v-if="updateStatus === 'completed'"
+          v-if="updateStatus === 'completed' && isWindows"
+          type="success"
+          :loading="autoExitCountdown > 0"
+          @click="handleExitForUpdate"
+        >
+          <template #icon>
+            <div class="i-carbon-power" />
+          </template>
+          {{ autoExitCountdown > 0 ? `即将退出 (${autoExitCountdown}s)` : '完成更新' }}
+        </n-button>
+
+        <!-- 非 Windows 平台：重启按钮 -->
+        <n-button
+          v-if="updateStatus === 'completed' && !isWindows"
           type="success"
           @click="handleRestart"
         >
