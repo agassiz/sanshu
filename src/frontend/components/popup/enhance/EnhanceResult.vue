@@ -29,8 +29,12 @@ const containerClass = computed(() => {
 })
 
 const statusIconClass = computed(() => {
-  if (props.errorMessage) return 'i-carbon-warning-alt text-rose-500'
-  if (props.hasCompleted) return 'i-carbon-checkmark-filled text-emerald-500'
+  if (props.errorMessage) {
+    return 'i-carbon-warning-alt text-rose-500'
+  }
+  if (props.hasCompleted) {
+    return 'i-carbon-checkmark-filled text-emerald-500'
+  }
   return 'i-carbon-magic-wand text-slate-400'
 })
 
@@ -42,12 +46,16 @@ const hasContent = computed(() => {
 })
 
 const blobCountText = computed(() => {
-  if (props.blobCount === null) return '未返回'
+  if (props.blobCount === null) {
+    return '未返回'
+  }
   return `已加载 ${props.blobCount} 个代码块`
 })
 
 const historyCountText = computed(() => {
-  if (props.historyCount === null) return '未返回'
+  if (props.historyCount === null) {
+    return '未返回'
+  }
   return `已加载 ${props.historyCount} 条记录`
 })
 
@@ -55,14 +63,22 @@ const showSourceRoot = computed(() => {
   return !!props.blobSourceRoot
 })
 
+// 中文注释：统一路径格式，避免 Windows 反斜杠导致误判
+function normalizePath(value: string) {
+  return value.trim().replace(/\\/g, '/').toLowerCase()
+}
+
 const sourceMismatch = computed(() => {
-  return !!props.blobSourceRoot && !!props.projectRootPath && props.blobSourceRoot !== props.projectRootPath
+  if (!props.blobSourceRoot || !props.projectRootPath) {
+    return false
+  }
+  return normalizePath(props.blobSourceRoot) !== normalizePath(props.projectRootPath)
 })
 </script>
 
 <template>
   <div class="rounded-2xl border p-4 shadow-sm transition-colors" :class="containerClass">
-    <div class="mb-3 flex items-center justify-between text-xs">
+    <div class="mb-3 flex items-center justify-between text-xs" role="status" aria-live="polite">
       <div class="flex items-center gap-2 text-slate-600 dark:text-slate-300">
         <div class="w-4 h-4" :class="statusIconClass" />
         <span>{{ statusText }}</span>

@@ -165,6 +165,7 @@ pub fn build_tauri_app() -> Builder<tauri::Wry> {
             // 提示词增强命令
             crate::mcp::tools::enhance::commands::enhance_prompt_stream,
             crate::mcp::tools::enhance::commands::enhance_prompt,
+            crate::mcp::tools::enhance::commands::cancel_enhance_request,
             crate::mcp::tools::enhance::commands::add_chat_history,
             crate::mcp::tools::enhance::commands::get_chat_history,
             crate::mcp::tools::enhance::commands::clear_chat_history,

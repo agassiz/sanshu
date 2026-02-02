@@ -4,6 +4,7 @@
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
+use std::sync::atomic::Ordering;
 use anyhow::Result;
 use reqwest::{Client, header::{AUTHORIZATION, CONTENT_TYPE}};
 use serde_json::json;
@@ -367,6 +368,10 @@ impl PromptEnhancer {
 
     /// 同步增强（等待完成后返回）
     pub async fn enhance(&self, request: EnhanceRequest) -> Result<EnhanceResponse> {
+        // 中文注释：为每次请求生成稳定的 request_id，便于前后端关联
+        let request_id = request.request_id.clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
         // 预加载 blob 信息，便于返回给前端展示来源与数量
         let (blob_names, blob_source_root) = self.load_blob_names();
         let blob_count = blob_names.len();
@@ -408,6 +413,7 @@ impl PromptEnhancer {
                 history_count,
                 project_root_path,
                 blob_source_root,
+                request_id: Some(request_id),
             });
         }
 
@@ -458,6 +464,7 @@ impl PromptEnhancer {
             history_count,
             project_root_path,
             blob_source_root,
+            request_id: Some(request_id),
         })
     }
 
@@ -466,6 +473,11 @@ impl PromptEnhancer {
     where
         F: FnMut(EnhanceStreamEvent) + Send,
     {
+        // 中文注释：为每次请求生成稳定的 request_id，便于前后端关联
+        let request_id = request.request_id.clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let cancel_flag = request.cancel_flag.clone();
+
         // 预加载 blob 信息，便于返回给前端展示来源与数量
         let (blob_names, blob_source_root) = self.load_blob_names();
         let blob_count = blob_names.len();
@@ -499,7 +511,7 @@ impl PromptEnhancer {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             let error_msg = format!("HTTP {} - {}", status, body);
-            on_event(EnhanceStreamEvent::error(&error_msg));
+            on_event(EnhanceStreamEvent::error(&request_id, &error_msg));
             return Ok(EnhanceResponse {
                 enhanced_prompt: String::new(),
                 original_prompt: request.prompt,
@@ -509,6 +521,7 @@ impl PromptEnhancer {
                 history_count,
                 project_root_path,
                 blob_source_root,
+                request_id: Some(request_id),
             });
         }
 
@@ -518,8 +531,17 @@ impl PromptEnhancer {
         let mut chunk_count = 0u32;
         let mut sse_buffer = String::new();
         let mut stream_failed = false;
+        let mut stream_error: Option<String> = None;
+        let mut cancelled = false;
 
         while let Some(chunk_result) = stream.next().await {
+            if let Some(flag) = &cancel_flag {
+                if flag.load(Ordering::Relaxed) {
+                    cancelled = true;
+                    break;
+                }
+            }
+
             match chunk_result {
                 Ok(bytes) => {
                     let text = String::from_utf8_lossy(&bytes);
@@ -535,6 +557,7 @@ impl PromptEnhancer {
                                     let progress = std::cmp::min(90, (chunk_count * 2) as u8);
 
                                     on_event(EnhanceStreamEvent::chunk(
+                                        &request_id,
                                         text_chunk,
                                         &accumulated_text,
                                         progress,
@@ -548,14 +571,44 @@ impl PromptEnhancer {
                     log_debug!("读取流式响应失败: {}", e);
                     // 读取失败时通知前端并终止流
                     let error_msg = format!("读取流式响应失败: {}", e);
-                    on_event(EnhanceStreamEvent::error(&error_msg));
+                    on_event(EnhanceStreamEvent::error(&request_id, &error_msg));
                     stream_failed = true;
+                    stream_error = Some(error_msg);
                     break;
                 }
             }
         }
+        // 中文注释：请求被取消时，停止后续解析与完成事件
+        if cancelled {
+            let cancel_msg = "已取消增强请求".to_string();
+            on_event(EnhanceStreamEvent::error(&request_id, &cancel_msg));
+            return Ok(EnhanceResponse {
+                enhanced_prompt: String::new(),
+                original_prompt: request.prompt,
+                success: false,
+                error: Some(cancel_msg),
+                blob_count,
+                history_count,
+                project_root_path,
+                blob_source_root,
+                request_id: Some(request_id),
+            });
+        }
+        if stream_failed {
+            return Ok(EnhanceResponse {
+                enhanced_prompt: String::new(),
+                original_prompt: request.prompt,
+                success: false,
+                error: stream_error.or_else(|| Some("读取流式响应失败".to_string())),
+                blob_count,
+                history_count,
+                project_root_path,
+                blob_source_root,
+                request_id: Some(request_id),
+            });
+        }
         // 处理最后残留的未换行片段
-        if !stream_failed && !sse_buffer.trim().is_empty() {
+        if !sse_buffer.trim().is_empty() {
             if let Some(json) = Self::parse_sse_json_line(&sse_buffer) {
                 if let Some(text_chunk) = json.get("text").and_then(|t| t.as_str()) {
                     if !text_chunk.is_empty() {
@@ -564,6 +617,7 @@ impl PromptEnhancer {
 
                         let progress = std::cmp::min(90, (chunk_count * 2) as u8);
                         on_event(EnhanceStreamEvent::chunk(
+                            &request_id,
                             text_chunk,
                             &accumulated_text,
                             progress,
@@ -580,9 +634,9 @@ impl PromptEnhancer {
         let success = !enhanced_prompt.is_empty();
 
         if success {
-            on_event(EnhanceStreamEvent::complete(&enhanced_prompt, &accumulated_text));
+            on_event(EnhanceStreamEvent::complete(&request_id, &enhanced_prompt, &accumulated_text));
         } else {
-            on_event(EnhanceStreamEvent::error("未能从响应中提取增强结果"));
+            on_event(EnhanceStreamEvent::error(&request_id, "未能从响应中提取增强结果"));
         }
 
         Ok(EnhanceResponse {
@@ -594,6 +648,7 @@ impl PromptEnhancer {
             history_count,
             project_root_path,
             blob_source_root,
+            request_id: Some(request_id),
         })
     }
 }

@@ -106,7 +106,8 @@ async function loadHistoryCount() {
 
   historyLoading.value = true
   try {
-    const res = await invoke('get_zhi_history', {
+    // 中文注释：读取提示词增强历史（非 zhi 交互历史）
+    const res = await invoke('get_chat_history', {
       projectRootPath: props.projectRootPath,
       count: 20,
     }) as any[]
@@ -116,13 +117,13 @@ async function loadHistoryCount() {
     // 错误分类处理，提供更友好的提示
     const errMsg = String(err)
     if (errMsg.includes('创建历史管理器失败')) {
-      message.error('历史管理器初始化失败，请检查项目路径是否正确')
+      message.error('增强历史管理器初始化失败，请检查项目路径是否正确')
     }
     else if (errMsg.includes('permission') || errMsg.includes('denied')) {
-      message.error('读取历史文件权限不足，请检查文件访问权限')
+      message.error('读取增强历史文件权限不足，请检查文件访问权限')
     }
     else {
-      message.error(`加载历史失败: ${errMsg}`)
+      message.error(`加载增强历史失败: ${errMsg}`)
     }
     historyCount.value = null
   }
@@ -138,7 +139,8 @@ async function clearHistory() {
   }
 
   try {
-    await invoke('clear_zhi_history', { projectRootPath: props.projectRootPath })
+    // 中文注释：清空提示词增强历史
+    await invoke('clear_chat_history', { projectRootPath: props.projectRootPath })
     historyCount.value = 0
     message.success('历史已清空')
   }
@@ -146,13 +148,13 @@ async function clearHistory() {
     // 错误分类处理，提供更友好的提示
     const errMsg = String(err)
     if (errMsg.includes('创建历史管理器失败')) {
-      message.error('历史管理器初始化失败，请检查项目路径是否正确')
+      message.error('增强历史管理器初始化失败，请检查项目路径是否正确')
     }
     else if (errMsg.includes('permission') || errMsg.includes('denied')) {
-      message.error('写入历史文件权限不足，请检查文件访问权限')
+      message.error('写入增强历史文件权限不足，请检查文件访问权限')
     }
     else {
-      message.error(`清空历史失败: ${errMsg}`)
+      message.error(`清空增强历史失败: ${errMsg}`)
     }
   }
 }
@@ -226,10 +228,10 @@ onMounted(() => {
         </ConfigSection>
 
         <!-- 历史管理 -->
-        <ConfigSection title="历史管理" description="仅保存文本摘要，不包含图片原始数据">
+        <ConfigSection title="增强历史管理" description="仅保存文本摘要，不包含图片原始数据">
           <div class="flex items-center justify-between">
             <div class="text-sm text-on-surface-secondary">
-              <div>当前项目历史条数</div>
+              <div>当前项目增强历史条数</div>
               <div class="text-xs opacity-70 mt-1">
                 <span v-if="historyLoading">加载中...</span>
                 <span v-else>{{ historyCount ?? '--' }}</span>

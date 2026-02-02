@@ -3,14 +3,13 @@
 import type { CustomPrompt } from '../../types/popup'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { useMediaQuery } from '@vueuse/core'
 import { useMessage } from 'naive-ui'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useMediaQuery } from '@vueuse/core'
-
+import { buildConditionalContext } from '../../utils/conditionalContext'
 import EnhanceConfigPanel from './enhance/EnhanceConfigPanel.vue'
 import EnhancePreview from './enhance/EnhancePreview.vue'
 import EnhanceResult from './enhance/EnhanceResult.vue'
-import { buildConditionalContext } from '../../utils/conditionalContext'
 
 interface Props {
   show: boolean
@@ -21,11 +20,12 @@ interface Props {
 
 interface Emits {
   'update:show': [value: boolean]
-  confirm: [enhancedPrompt: string]
-  cancel: []
+  'confirm': [enhancedPrompt: string]
+  'cancel': []
 }
 
 interface EnhanceStreamEvent {
+  request_id: string
   event_type: 'chunk' | 'complete' | 'error'
   chunk?: string
   accumulated_text?: string
@@ -43,6 +43,7 @@ interface EnhanceResponse {
   history_count?: number
   project_root_path?: string | null
   blob_source_root?: string | null
+  request_id?: string | null
 }
 
 interface EnhanceConfig {
@@ -69,6 +70,8 @@ const isMobile = useMediaQuery('(max-width: 640px)')
 
 const DEFAULT_RULE = '请确保增强后的提示词以中文为主要输出语言'
 const CUSTOM_RULE_MAX = 200
+// 中文注释：限制最终提示词最大长度，避免超时
+const MAX_PROMPT_LENGTH = 10000
 
 // 状态
 const isEnhancing = ref(false)
@@ -77,6 +80,8 @@ const enhancedPrompt = ref('')
 const progress = ref(0)
 const errorMessage = ref('')
 const hasCompleted = ref(false)
+// 中文注释：用于关联流式事件与当前请求，避免并发串扰
+const activeRequestId = ref<string | null>(null)
 
 const config = ref<EnhanceConfig>({
   includeContext: false,
@@ -108,7 +113,9 @@ const coreCharCount = computed(() => corePrompt.value.length)
 const contextText = computed(() => buildConditionalContext(conditionalPrompts.value))
 
 const finalPrompt = computed(() => {
-  if (!corePrompt.value) return ''
+  if (!corePrompt.value) {
+    return ''
+  }
 
   const parts: string[] = []
   if (config.value.includeContext && contextText.value.trim()) {
@@ -136,9 +143,15 @@ const displayBlobSourceRoot = computed(() => blobSourceRoot.value || '')
 
 const canConfirm = computed(() => hasCompleted.value && enhancedPrompt.value.length > 0)
 const statusText = computed(() => {
-  if (errorMessage.value) return '增强失败'
-  if (hasCompleted.value) return '增强完成'
-  if (isEnhancing.value) return `增强中... ${progress.value}%`
+  if (errorMessage.value) {
+    return '增强失败'
+  }
+  if (hasCompleted.value) {
+    return '增强完成'
+  }
+  if (isEnhancing.value) {
+    return `增强中... ${progress.value}%`
+  }
   return '准备就绪'
 })
 
@@ -165,6 +178,49 @@ function handleCustomRuleInputChange(value: string) {
   customRuleInput.value = value
 }
 
+// 生成请求 ID（用于事件关联与取消）
+function createRequestId() {
+  // 中文注释：优先使用浏览器原生的随机 ID
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID()
+  }
+  // 中文注释：降级方案，保证有唯一性
+  return `${Date.now()}_${Math.random().toString(16).slice(2)}`
+}
+
+// 取消当前增强请求（用于关闭弹窗时中断后端任务）
+async function cancelActiveRequest() {
+  if (!activeRequestId.value || !isEnhancing.value) {
+    return
+  }
+  try {
+    await invoke('cancel_enhance_request', { requestId: activeRequestId.value })
+  }
+  catch (error) {
+    console.warn('取消增强请求失败:', error)
+  }
+}
+
+// 复制增强结果
+async function handleCopyResult() {
+  if (!enhancedPrompt.value) {
+    return
+  }
+  try {
+    // 中文注释：剪贴板 API 不可用时给出提示
+    if (!navigator.clipboard) {
+      message.error('当前环境不支持自动复制')
+      return
+    }
+    await navigator.clipboard.writeText(enhancedPrompt.value)
+    message.success('已复制增强结果')
+  }
+  catch (error) {
+    console.error('复制增强结果失败:', error)
+    message.error('复制失败，请手动选择文本')
+  }
+}
+
 // 统一重置增强状态
 function resetEnhanceState() {
   isEnhancing.value = false
@@ -173,6 +229,7 @@ function resetEnhanceState() {
   progress.value = 0
   errorMessage.value = ''
   hasCompleted.value = false
+  activeRequestId.value = null
   blobCount.value = null
   historyCount.value = null
   responseProjectRoot.value = ''
@@ -266,7 +323,9 @@ function handleHistorySelectionChange(ids: string[]) {
 
 // 准备增强：先加载上下文/历史，再触发增强
 async function prepareEnhance() {
-  if (!corePrompt.value) return
+  if (!corePrompt.value) {
+    return
+  }
 
   if (config.value.includeContext) {
     await loadConditionalPrompts()
@@ -283,7 +342,9 @@ async function prepareEnhance() {
 
 // 开始增强
 async function startEnhance() {
-  if (isEnhancing.value) return
+  if (isEnhancing.value) {
+    return
+  }
 
   // 启动前释放旧监听，避免重复订阅导致多次回调
   if (unlisten) {
@@ -293,7 +354,18 @@ async function startEnhance() {
 
   // 重置状态
   resetEnhanceState()
+
+  // 中文注释：限制提示词长度，避免请求超时或被拒绝
+  if (finalPrompt.value.length > MAX_PROMPT_LENGTH) {
+    const errorText = `提示词过长（>${MAX_PROMPT_LENGTH} 字符），请精简后再试`
+    errorMessage.value = errorText
+    message.error(errorText)
+    return
+  }
+
   isEnhancing.value = true
+  const requestId = createRequestId()
+  activeRequestId.value = requestId
 
   try {
     // 进度锁定标志：complete 事件后锁定，防止后续 chunk 事件重置进度
@@ -302,6 +374,9 @@ async function startEnhance() {
     // 设置事件监听
     unlisten = await listen<EnhanceStreamEvent>('enhance-stream', (event) => {
       const data = event.payload
+      if (activeRequestId.value !== requestId || data.request_id !== requestId) {
+        return
+      }
 
       switch (data.event_type) {
         case 'chunk':
@@ -345,36 +420,64 @@ async function startEnhance() {
       currentFilePath: props.currentFilePath || null,
       includeHistory: config.value.includeHistory,
       selectedHistoryIds,
+      requestId,
     }) as EnhanceResponse
 
-    if (response) {
-      blobCount.value = typeof response.blob_count === 'number' ? response.blob_count : null
-      historyCount.value = typeof response.history_count === 'number' ? response.history_count : null
-      responseProjectRoot.value = response.project_root_path || props.projectRootPath || ''
-      blobSourceRoot.value = response.blob_source_root || ''
+    if (!response || activeRequestId.value !== requestId) {
+      return
+    }
+    if (response.request_id && response.request_id !== requestId) {
+      return
+    }
 
-      if (response.success === false && response.error && !errorMessage.value) {
-        errorMessage.value = response.error
-      }
+    blobCount.value = typeof response.blob_count === 'number' ? response.blob_count : null
+    historyCount.value = typeof response.history_count === 'number' ? response.history_count : null
+    responseProjectRoot.value = response.project_root_path || props.projectRootPath || ''
+    blobSourceRoot.value = response.blob_source_root || ''
+
+    // 中文注释：事件监听失败时，用响应结果兜底
+    if (response.success && response.enhanced_prompt && !hasCompleted.value) {
+      enhancedPrompt.value = response.enhanced_prompt
+      streamContent.value = response.enhanced_prompt
+      progress.value = 100
+      hasCompleted.value = true
+      isEnhancing.value = false
+    }
+
+    if (response.success === false && response.error && !errorMessage.value) {
+      errorMessage.value = response.error
+      isEnhancing.value = false
     }
   }
   catch (error) {
+    if (activeRequestId.value !== requestId) {
+      return
+    }
     console.error('增强失败:', error)
     errorMessage.value = String(error)
     isEnhancing.value = false
+  }
+  finally {
+    if (activeRequestId.value === requestId) {
+      activeRequestId.value = null
+    }
   }
 }
 
 // 确认使用增强结果
 function handleConfirm() {
-  if (!canConfirm.value) return
+  if (!canConfirm.value) {
+    return
+  }
   emit('confirm', enhancedPrompt.value)
   handleClose()
 }
 
 // 重试增强
 function handleRetry() {
-  if (isEnhancing.value) return
+  if (isEnhancing.value) {
+    return
+  }
   startEnhance()
 }
 
@@ -387,6 +490,8 @@ function handleClose() {
 
 // 清理
 function cleanup() {
+  // 中文注释：关闭时尽量取消后端请求，减少资源浪费
+  void cancelActiveRequest()
   if (unlisten) {
     unlisten()
     unlisten = null
@@ -445,6 +550,8 @@ onUnmounted(() => {
           text
           size="small"
           :disabled="isEnhancing"
+          aria-label="关闭提示词增强弹窗"
+          title="关闭"
           class="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
           @click="handleClose"
         >
@@ -517,6 +624,14 @@ onUnmounted(() => {
             @click="handleRetry"
           >
             重试
+          </n-button>
+          <n-button
+            v-else-if="hasCompleted && enhancedPrompt"
+            size="small"
+            class="w-full bg-white/70 text-slate-600 shadow-sm hover:bg-white sm:w-auto dark:bg-slate-800/60 dark:text-slate-200 dark:hover:bg-slate-800"
+            @click="handleCopyResult"
+          >
+            复制结果
           </n-button>
         </div>
         <div class="flex flex-col gap-2 sm:flex-row sm:items-center">

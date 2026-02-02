@@ -1,11 +1,42 @@
 // Tauri 命令入口
 // 将提示词增强功能暴露给前端调用
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
+use once_cell::sync::Lazy;
 use tauri::{AppHandle, Emitter};
 use super::types::*;
 use super::core::PromptEnhancer;
 use super::history::ChatHistoryManager;
 use crate::log_important;
+
+// 中文注释：保存增强请求的取消标记，用于前端主动取消
+static ENHANCE_CANCEL_FLAGS: Lazy<Mutex<HashMap<String, Arc<AtomicBool>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+fn register_cancel_flag(request_id: &str) -> Arc<AtomicBool> {
+    let flag = Arc::new(AtomicBool::new(false));
+    if let Ok(mut map) = ENHANCE_CANCEL_FLAGS.lock() {
+        map.insert(request_id.to_string(), flag.clone());
+    }
+    flag
+}
+
+fn remove_cancel_flag(request_id: &str) {
+    if let Ok(mut map) = ENHANCE_CANCEL_FLAGS.lock() {
+        map.remove(request_id);
+    }
+}
+
+fn cancel_request(request_id: &str) -> bool {
+    if let Ok(map) = ENHANCE_CANCEL_FLAGS.lock() {
+        if let Some(flag) = map.get(request_id) {
+            flag.store(true, Ordering::Relaxed);
+            return true;
+        }
+    }
+    false
+}
 
 /// 流式增强提示词（主要入口）
 /// 通过 Tauri Event 推送流式结果给前端
@@ -17,8 +48,13 @@ pub async fn enhance_prompt_stream(
     current_file_path: Option<String>,
     include_history: Option<bool>,
     selected_history_ids: Option<Vec<String>>,
+    request_id: Option<String>,
 ) -> Result<EnhanceResponse, String> {
-    log_important!(info, "收到增强请求: prompt_len={}, project={:?}", 
+    let request_id = request_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let cancel_flag = register_cancel_flag(&request_id);
+
+    log_important!(info, "收到增强请求: request_id={}, prompt_len={}, project={:?}", 
+        request_id,
         prompt.len(), 
         project_root_path.as_ref().map(|p| p.len())
     );
@@ -38,6 +74,8 @@ pub async fn enhance_prompt_stream(
         current_file_path,
         include_history: include_history.unwrap_or(true),
         selected_history_ids,
+        request_id: Some(request_id.clone()),
+        cancel_flag: Some(cancel_flag.clone()),
     };
 
     // 使用流式增强
@@ -48,6 +86,9 @@ pub async fn enhance_prompt_stream(
             log_important!(warn, "推送增强事件失败: {}", e);
         }
     }).await;
+
+    // 中文注释：请求结束后释放取消标记，避免内存泄漏
+    remove_cancel_flag(&request_id);
 
     match result {
         Ok(response) => {
@@ -77,8 +118,11 @@ pub async fn enhance_prompt(
     current_file_path: Option<String>,
     include_history: Option<bool>,
     selected_history_ids: Option<Vec<String>>,
+    request_id: Option<String>,
 ) -> Result<EnhanceResponse, String> {
-    log_important!(info, "收到同步增强请求: prompt_len={}", prompt.len());
+    let request_id = request_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+    log_important!(info, "收到同步增强请求: request_id={}, prompt_len={}", request_id, prompt.len());
 
     // 创建增强器
     let mut enhancer = PromptEnhancer::from_acemcp_config()
@@ -95,6 +139,8 @@ pub async fn enhance_prompt(
         current_file_path,
         include_history: include_history.unwrap_or(true),
         selected_history_ids,
+        request_id: Some(request_id),
+        cancel_flag: None,
     };
 
     enhancer.enhance(request)
@@ -142,4 +188,12 @@ pub async fn clear_chat_history(
     
     manager.clear()
         .map_err(|e| format!("清空历史失败: {}", e))
+}
+
+/// 取消正在进行的增强请求
+#[tauri::command]
+pub async fn cancel_enhance_request(
+    request_id: String,
+) -> Result<bool, String> {
+    Ok(cancel_request(&request_id))
 }

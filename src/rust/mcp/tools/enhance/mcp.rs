@@ -99,6 +99,9 @@ impl EnhanceTool {
             current_file_path: None,
             include_history,
             selected_history_ids: request.selected_history_ids.clone(),
+            // 中文注释：MCP 调用无需前端取消与请求关联，保持为空
+            request_id: None,
+            cancel_flag: None,
         };
 
         match enhancer.enhance(enhance_request).await {

@@ -1,6 +1,7 @@
 // 提示词增强模块的类型定义
 
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, atomic::AtomicBool};
 
 /// 增强请求参数
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +20,12 @@ pub struct EnhanceRequest {
     /// 指定参与增强的历史记录 ID（为空时使用默认最近历史）
     #[serde(default)]
     pub selected_history_ids: Option<Vec<String>>,
+    /// 请求 ID（用于前后端与流式事件关联）
+    #[serde(default)]
+    pub request_id: Option<String>,
+    /// 取消标记（仅后端内部使用，前端不可见）
+    #[serde(skip)]
+    pub cancel_flag: Option<Arc<AtomicBool>>,
 }
 
 fn default_include_history() -> bool {
@@ -49,11 +56,16 @@ pub struct EnhanceResponse {
     /// 实际匹配到的项目根路径（用于确认上下文来源）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blob_source_root: Option<String>,
+    /// 请求 ID（用于前后端关联）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
 }
 
 /// 流式增强事件（通过 Tauri Event 推送给前端）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnhanceStreamEvent {
+    /// 请求 ID（用于并发请求关联）
+    pub request_id: String,
     /// 事件类型: "chunk" | "complete" | "error"
     pub event_type: String,
     /// 流式文本块（仅 chunk 类型有值）
@@ -75,8 +87,9 @@ pub struct EnhanceStreamEvent {
 
 impl EnhanceStreamEvent {
     /// 创建文本块事件
-    pub fn chunk(text: &str, accumulated: &str, progress: u8) -> Self {
+    pub fn chunk(request_id: &str, text: &str, accumulated: &str, progress: u8) -> Self {
         Self {
+            request_id: request_id.to_string(),
             event_type: "chunk".to_string(),
             chunk: Some(text.to_string()),
             accumulated_text: Some(accumulated.to_string()),
@@ -87,8 +100,9 @@ impl EnhanceStreamEvent {
     }
 
     /// 创建完成事件
-    pub fn complete(enhanced_prompt: &str, full_text: &str) -> Self {
+    pub fn complete(request_id: &str, enhanced_prompt: &str, full_text: &str) -> Self {
         Self {
+            request_id: request_id.to_string(),
             event_type: "complete".to_string(),
             chunk: None,
             accumulated_text: Some(full_text.to_string()),
@@ -99,8 +113,9 @@ impl EnhanceStreamEvent {
     }
 
     /// 创建错误事件
-    pub fn error(message: &str) -> Self {
+    pub fn error(request_id: &str, message: &str) -> Self {
         Self {
+            request_id: request_id.to_string(),
             event_type: "error".to_string(),
             chunk: None,
             accumulated_text: None,
