@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, LogicalSize, Manager, State};
 
-use super::settings::{AppConfig, AppState, default_shortcuts};
+use super::settings::{AppConfig, AppState, default_shortcuts, default_custom_prompts};
 
 pub fn get_config_path(_app: &AppHandle) -> Result<PathBuf> {
     // 使用与独立配置相同的路径，确保一致性
@@ -47,6 +47,8 @@ pub async fn load_config(state: &State<'_, AppState>, app: &AppHandle) -> Result
 
         // 合并默认快捷键配置，确保新的默认快捷键被添加
         merge_default_shortcuts(&mut config);
+        // 合并默认提示词配置，确保新的默认提示词被添加
+        merge_default_custom_prompts(&mut config);
 
         let mut config_guard = state
             .config
@@ -129,6 +131,8 @@ pub fn load_standalone_config() -> Result<AppConfig> {
 
         // 合并默认快捷键配置
         merge_default_shortcuts(&mut config);
+        // 合并默认提示词配置
+        merge_default_custom_prompts(&mut config);
 
         Ok(config)
     } else {
@@ -180,4 +184,28 @@ fn merge_default_shortcuts(config: &mut AppConfig) {
             }
         }
     }
+}
+
+/// 合并默认自定义提示词配置，确保新的默认提示词被添加到现有配置中
+/// 保留用户对已有提示词的修改（如 current_state、template_true 等）
+fn merge_default_custom_prompts(config: &mut AppConfig) {
+    let default_prompts = default_custom_prompts();
+
+    // 遍历所有默认提示词
+    for default_prompt in default_prompts {
+        // 检查用户配置中是否已存在该提示词（按 ID 匹配）
+        let exists = config.custom_prompt_config.prompts
+            .iter()
+            .any(|p| p.id == default_prompt.id);
+
+        if !exists {
+            // 用户配置中不存在，添加新的默认提示词
+            config.custom_prompt_config.prompts.push(default_prompt);
+        }
+        // 如果存在，保留用户的修改，不覆盖
+    }
+
+    // 按 sort_order 重新排序，确保显示顺序正确
+    config.custom_prompt_config.prompts
+        .sort_by(|a, b| a.sort_order.cmp(&b.sort_order));
 }
