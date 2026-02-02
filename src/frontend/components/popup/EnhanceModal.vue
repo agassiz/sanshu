@@ -537,13 +537,13 @@ onUnmounted(() => {
     preset="card"
     :closable="false"
     :mask-closable="!isEnhancing"
-    class="w-[640px] max-w-[92vw]"
+    class="w-[92vw] sm:w-[640px] max-w-[94vw]"
     @update:show="(val: boolean) => !isEnhancing && emit('update:show', val)"
   >
     <template #header>
       <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-100">
-          <div class="i-carbon-magic-wand h-4 w-4 text-amber-500" />
+        <div class="flex items-center gap-2 text-sm font-semibold text-white">
+          <div class="i-carbon-magic-wand h-4 w-4 text-primary-500" />
           提示词增强
         </div>
         <n-button
@@ -552,7 +552,7 @@ onUnmounted(() => {
           :disabled="isEnhancing"
           aria-label="关闭提示词增强弹窗"
           title="关闭"
-          class="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+          class="min-h-[44px] min-w-[44px] rounded-full text-black-500 transition-colors duration-200 hover:text-black-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-[32px] sm:min-w-[32px]"
           @click="handleClose"
         >
           <div class="i-carbon-close h-4 w-4" />
@@ -560,17 +560,17 @@ onUnmounted(() => {
       </div>
     </template>
 
-    <div class="space-y-4">
+    <div class="space-y-4 sm:space-y-5">
       <!-- 核心输入区 -->
-      <div class="rounded-2xl border border-stone-200/80 bg-gradient-to-br from-stone-50/80 to-amber-50/60 p-4 shadow-sm dark:border-slate-700/50 dark:from-slate-900/40 dark:to-slate-800/40">
-        <div class="mb-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+      <div class="rounded-2xl border border-black-200/70 bg-gradient-to-br from-black-50/90 to-black-100/80 p-4 shadow-sm">
+        <div class="mb-2 flex items-center justify-between text-xs text-black-500">
           <div class="flex items-center gap-2">
             <div class="i-carbon-document h-3.5 w-3.5" />
             核心提示词
           </div>
           <span>{{ coreCharCount }} 字符</span>
         </div>
-        <div class="max-h-28 overflow-y-auto whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-200">
+        <div class="max-h-28 overflow-y-auto whitespace-pre-wrap text-sm text-white">
           {{ corePrompt || '暂无输入内容' }}
         </div>
       </div>
@@ -620,7 +620,7 @@ onUnmounted(() => {
           <n-button
             v-if="errorMessage && !isEnhancing"
             size="small"
-            class="w-full !bg-gradient-to-r from-rose-200 to-amber-200 !text-rose-900 shadow-sm hover:from-rose-300 hover:to-amber-300 sm:w-auto"
+            class="w-full min-h-[44px] rounded-lg border border-error/30 !bg-error/10 !text-black-900 shadow-sm transition-colors duration-200 hover:!bg-error/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-error/30 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-[36px] sm:w-auto"
             @click="handleRetry"
           >
             重试
@@ -628,7 +628,7 @@ onUnmounted(() => {
           <n-button
             v-else-if="hasCompleted && enhancedPrompt"
             size="small"
-            class="w-full bg-white/70 text-slate-600 shadow-sm hover:bg-white sm:w-auto dark:bg-slate-800/60 dark:text-slate-200 dark:hover:bg-slate-800"
+            class="w-full min-h-[44px] rounded-lg border border-black-200/70 !bg-black-50/90 text-black-700 shadow-sm transition-colors duration-200 hover:!bg-black-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-[36px] sm:w-auto dark:!bg-black-200/80"
             @click="handleCopyResult"
           >
             复制结果
@@ -637,7 +637,7 @@ onUnmounted(() => {
         <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
           <n-button
             size="small"
-            class="w-full bg-white/70 text-slate-600 shadow-sm hover:bg-white sm:w-auto dark:bg-slate-800/60 dark:text-slate-200 dark:hover:bg-slate-800"
+            class="w-full min-h-[44px] rounded-lg border border-black-200/70 !bg-black-50/90 text-black-700 shadow-sm transition-colors duration-200 hover:!bg-black-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-[36px] sm:w-auto dark:!bg-black-200/80"
             @click="handleClose"
           >
             取消
@@ -645,7 +645,7 @@ onUnmounted(() => {
           <n-button
             size="small"
             :disabled="!canConfirm"
-            class="w-full !bg-gradient-to-r from-emerald-200 to-teal-200 !text-emerald-900 shadow-sm hover:from-emerald-300 hover:to-teal-300 sm:w-auto"
+            class="w-full min-h-[44px] rounded-lg border border-primary-200/60 !bg-primary-200 !text-black-900 shadow-sm transition-colors duration-200 hover:!bg-primary-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-[36px] sm:w-auto dark:border-primary-600/40 dark:!bg-primary-700 dark:!text-white dark:hover:!bg-primary-600"
             @click="handleConfirm"
           >
             <template #icon>
