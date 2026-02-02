@@ -124,6 +124,52 @@ pub fn generate_request_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+// ============================================================================
+// UTF-8 安全字符串截断工具
+// ============================================================================
+
+/// 安全截断字符串（UTF-8 友好）
+///
+/// 按字符数（而非字节数）截断字符串，避免在多字节字符边界处截断导致 panic。
+/// 如果截断发生，自动添加 "..." 省略号。
+///
+/// # 参数
+/// - `text`: 要截断的字符串
+/// - `max_chars`: 最大字符数（不包括省略号）
+///
+/// # 示例
+/// ```
+/// let chinese = "你好世界，这是一段很长的中文文本";
+/// let truncated = safe_truncate(chinese, 5);
+/// assert_eq!(truncated, "你好世界，...");
+/// ```
+pub fn safe_truncate(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let truncated: String = text.chars().take(max_chars).collect();
+    format!("{}...", truncated)
+}
+
+/// 安全截断并清理字符串（UTF-8 友好，移除换行符）
+///
+/// 与 `safe_truncate` 类似，但会额外进行文本清理：
+/// - 将换行符（\r, \n）替换为空格
+/// - 去除首尾空白
+///
+/// # 参数
+/// - `text`: 要截断的字符串
+/// - `max_chars`: 最大字符数（不包括省略号）
+pub fn safe_truncate_clean(text: &str, max_chars: usize) -> String {
+    let cleaned = text.replace(['\r', '\n'], " ");
+    let trimmed = cleaned.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+    let truncated: String = trimmed.chars().take(max_chars).collect();
+    format!("{}...", truncated)
+}
+
 
 
 

@@ -218,9 +218,10 @@ fn sanitize_filename(name: &str) -> String {
         safe_name = "icon".to_string();
     }
     
-    // 限制长度
-    if safe_name.len() > 64 {
-        safe_name = safe_name[..64].to_string();
+    // 限制长度（使用字符数截断，避免 UTF-8 多字节字符被截断导致 panic）
+    // 注意：is_alphanumeric() 对中文返回 true，所以文件名可能包含多字节字符
+    if safe_name.chars().count() > 64 {
+        safe_name = safe_name.chars().take(64).collect();
     }
     
     safe_name

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use ring::digest::{Context, SHA256};
 
 use crate::{log_debug, log_important};
+use crate::mcp::utils::safe_truncate;
 
 /// 对话历史管理器
 pub struct ChatHistoryManager {
@@ -145,11 +146,8 @@ impl ChatHistoryManager {
         );
 
         // 截取AI响应摘要（最多500字符）
-        let ai_summary = if ai_response.len() > 500 {
-            format!("{}...", &ai_response[..500])
-        } else {
-            ai_response.to_string()
-        };
+        // 使用 safe_truncate 确保在 UTF-8 字符边界安全截断，避免多字节字符被截断导致 panic
+        let ai_summary = safe_truncate(ai_response, 500);
 
         let entry = ChatEntry {
             id: id.clone(),
