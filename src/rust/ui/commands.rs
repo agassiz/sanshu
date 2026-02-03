@@ -376,6 +376,7 @@ pub async fn send_mcp_response(
     // 检查是否为CLI模式（用于命令行独立调用）
     let args: Vec<String> = std::env::args().collect();
     let is_cli_mode = args.iter().any(|arg| arg == "--cli");
+    let is_mcp_mode = args.len() >= 3 && args[1] == "--mcp-request";
 
     // CLI模式下识别取消信号，转换为结构化JSON
     let is_cancelled = if is_cli_mode {
@@ -408,8 +409,13 @@ pub async fn send_mcp_response(
         return Err("响应内容不能为空".to_string());
     }
 
-    // 检查是否为MCP模式
-    let is_mcp_mode = args.len() >= 3 && args[1] == "--mcp-request";
+    log::debug!(
+        "[send_mcp_response] mode: mcp={}, cli={}, cancelled={}, response_len={}",
+        is_mcp_mode,
+        is_cli_mode,
+        is_cancelled,
+        response_str.len()
+    );
 
     if is_mcp_mode || is_cli_mode {
         // MCP/CLI模式：直接输出到stdout（CLI要求结构化JSON）
@@ -433,6 +439,8 @@ pub async fn send_mcp_response(
 
         if let Some(sender) = sender {
             let _ = sender.send(response_str);
+        } else {
+            log::warn!("[send_mcp_response] response_channel 为空，已丢弃响应（非MCP/CLI模式）");
         }
     }
 
@@ -511,20 +519,39 @@ pub fn get_cli_args() -> Result<serde_json::Value, String> {
 #[tauri::command]
 pub fn read_mcp_request(file_path: String) -> Result<serde_json::Value, String> {
     if !std::path::Path::new(&file_path).exists() {
+        log::warn!("[read_mcp_request] 文件不存在: {}", file_path);
         return Err(format!("文件不存在: {}", file_path));
     }
 
     match std::fs::read_to_string(&file_path) {
         Ok(content) => {
             if content.trim().is_empty() {
+                log::warn!("[read_mcp_request] 文件内容为空: {}", file_path);
                 return Err("文件内容为空".to_string());
             }
             match serde_json::from_str(&content) {
-                Ok(json) => Ok(json),
-                Err(e) => Err(format!("解析JSON失败: {}", e)),
+                Ok(json) => {
+                    log::debug!(
+                        "[read_mcp_request] 读取成功: file={}, content_len={}",
+                        file_path,
+                        content.len()
+                    );
+                    Ok(json)
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[read_mcp_request] 解析JSON失败: file={}, error={}",
+                        file_path,
+                        e
+                    );
+                    Err(format!("解析JSON失败: {}", e))
+                }
             }
         }
-        Err(e) => Err(format!("读取文件失败: {}", e)),
+        Err(e) => {
+            log::warn!("[read_mcp_request] 读取文件失败: file={}, error={}", file_path, e);
+            Err(format!("读取文件失败: {}", e))
+        }
     }
 }
 

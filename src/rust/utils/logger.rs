@@ -2,12 +2,15 @@ use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Once;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Mutex, Once};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use log::LevelFilter;
 use env_logger::{Builder, Target};
 
 static INIT: Once = Once::new();
+
+/// 运行时清理间隔：避免每条日志都扫描目录
+const LOG_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 
 /// 日志轮转配置
 #[derive(Debug, Clone)]
@@ -159,6 +162,174 @@ fn cleanup_old_logs(log_path: &PathBuf, rotation_config: &LogRotationConfig) {
     }
 }
 
+/// 支持运行时轮转的日志写入器（线程安全）
+///
+/// 设计目标：
+/// - 运行中按大小轮转（Windows 需先关闭文件再 rename）
+/// - 周期性清理过期备份
+/// - GUI 模式可选同时写 stderr（但不影响 MCP stdout 协议）
+struct RotatingFileInner {
+    log_path: PathBuf,
+    rotation: LogRotationConfig,
+    file: Option<std::fs::File>,
+    current_size: u64,
+    last_cleanup_at: SystemTime,
+}
+
+impl RotatingFileInner {
+    fn open_file(log_path: &PathBuf) -> std::io::Result<std::fs::File> {
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path)
+    }
+
+    fn new(log_path: PathBuf, rotation: LogRotationConfig) -> std::io::Result<Self> {
+        // 确保日志目录存在
+        let _ = ensure_log_directory(&log_path);
+
+        // 启动时先做一次轮转与清理（与旧逻辑保持一致）
+        rotate_log_if_needed(&log_path, &rotation);
+
+        let file = Self::open_file(&log_path)?;
+        let current_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+
+        Ok(Self {
+            log_path,
+            rotation,
+            file: Some(file),
+            current_size,
+            last_cleanup_at: SystemTime::now(),
+        })
+    }
+
+    fn ensure_open(&mut self) -> std::io::Result<()> {
+        if self.file.is_some() {
+            return Ok(());
+        }
+        let file = Self::open_file(&self.log_path)?;
+        self.current_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+        self.file = Some(file);
+        Ok(())
+    }
+
+    fn maybe_cleanup(&mut self) {
+        let now = SystemTime::now();
+        let should_cleanup = match now.duration_since(self.last_cleanup_at) {
+            Ok(elapsed) => elapsed >= LOG_CLEANUP_INTERVAL,
+            Err(_) => true,
+        };
+
+        if !should_cleanup {
+            return;
+        }
+
+        cleanup_old_logs(&self.log_path, &self.rotation);
+        self.last_cleanup_at = now;
+    }
+
+    fn rotate_now(&mut self) -> std::io::Result<()> {
+        if self.rotation.max_backup_count == 0 {
+            return Ok(());
+        }
+
+        // 关闭当前文件（Windows 下否则 rename 可能失败）
+        if let Some(mut f) = self.file.take() {
+            let _ = f.flush();
+        }
+
+        // 执行轮转 + 清理
+        perform_log_rotation(&self.log_path, self.rotation.max_backup_count);
+        cleanup_old_logs(&self.log_path, &self.rotation);
+        self.last_cleanup_at = SystemTime::now();
+
+        // 重新打开新文件
+        self.ensure_open()
+    }
+
+    fn maybe_rotate(&mut self) -> std::io::Result<()> {
+        if self.current_size < self.rotation.max_size_bytes {
+            return Ok(());
+        }
+        self.rotate_now()
+    }
+
+    fn write_all_internal(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        self.ensure_open()?;
+
+        // 文件写入
+        if let Some(file) = self.file.as_mut() {
+            file.write_all(buf)?;
+            self.current_size = self.current_size.saturating_add(buf.len() as u64);
+        }
+
+        // 写入后按大小轮转
+        self.maybe_rotate()?;
+
+        // 周期性清理过期备份
+        self.maybe_cleanup();
+
+        Ok(())
+    }
+
+    fn flush_internal(&mut self) -> std::io::Result<()> {
+        if let Some(file) = self.file.as_mut() {
+            file.flush()?;
+        }
+        Ok(())
+    }
+}
+
+struct RotatingFileWriter {
+    inner: Mutex<RotatingFileInner>,
+    also_stderr: bool,
+}
+
+impl RotatingFileWriter {
+    fn new(log_path: PathBuf, rotation: LogRotationConfig, also_stderr: bool) -> std::io::Result<Self> {
+        Ok(Self {
+            inner: Mutex::new(RotatingFileInner::new(log_path, rotation)?),
+            also_stderr,
+        })
+    }
+
+    fn lock_inner(&self) -> std::io::Result<std::sync::MutexGuard<'_, RotatingFileInner>> {
+        self.inner.lock().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::Other, "日志写入锁已被毒化（poisoned）")
+        })
+    }
+}
+
+impl Write for RotatingFileWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // 先写文件（失败则返回错误；GUI 模式下仍尝试写 stderr 便于排障）
+        let write_result = {
+            let mut inner = self.lock_inner()?;
+            inner.write_all_internal(buf)
+        };
+
+        if self.also_stderr {
+            let _ = std::io::stderr().write_all(buf);
+        }
+
+        write_result?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        let flush_result = {
+            let mut inner = self.lock_inner()?;
+            inner.flush_internal()
+        };
+
+        if self.also_stderr {
+            let _ = std::io::stderr().flush();
+        }
+
+        flush_result
+    }
+}
+
 /// 初始化日志系统
 pub fn init_logger(config: LogConfig) -> Result<(), Box<dyn std::error::Error>> {
     INIT.call_once(|| {
@@ -189,22 +360,16 @@ pub fn init_logger(config: LogConfig) -> Result<(), Box<dyn std::error::Error>> 
             if let Some(file_path) = &config.file_path {
                 let log_path = PathBuf::from(file_path);
                 
-                // 确保日志目录存在
-                let _ = ensure_log_directory(&log_path);
-                
-                // 执行日志轮转检查
-                rotate_log_if_needed(&log_path, &config.rotation);
-                
-                if let Ok(log_file) = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&log_path) 
-                {
-                    builder.target(Target::Pipe(Box::new(log_file)));
-                } else {
+                // MCP 模式下严格只写文件；创建失败则关闭日志，避免污染 MCP stdout 协议
+                match RotatingFileWriter::new(log_path, config.rotation.clone(), false) {
+                    Ok(writer) => {
+                        builder.target(Target::Pipe(Box::new(writer)));
+                    }
+                    Err(_) => {
                     // 如果文件打开失败，禁用日志输出
                     builder.filter_level(LevelFilter::Off);
-                }
+                    }
+                };
             } else {
                 // MCP 模式下没有指定文件路径，禁用日志输出
                 builder.filter_level(LevelFilter::Off);
@@ -214,39 +379,16 @@ pub fn init_logger(config: LogConfig) -> Result<(), Box<dyn std::error::Error>> 
             if let Some(file_path) = &config.file_path {
                 let log_path = PathBuf::from(file_path);
                 
-                // 确保日志目录存在
-                let _ = ensure_log_directory(&log_path);
-                
-                // 执行日志轮转检查
-                rotate_log_if_needed(&log_path, &config.rotation);
-                
-                // 尝试打开文件，如果成功则同时输出到文件和 stderr
-                if let Ok(log_file) = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&log_path) 
-                {
-                    // 使用自定义目标，同时写入文件和 stderr
-                    use std::io::Write;
-                    struct DualWriter {
-                        file: std::fs::File,
+                // GUI 模式：优先文件+stderr（带运行时轮转）；失败则退化为 stderr
+                match RotatingFileWriter::new(log_path, config.rotation.clone(), true) {
+                    Ok(writer) => {
+                        builder.target(Target::Pipe(Box::new(writer)));
                     }
-                    impl Write for DualWriter {
-                        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                            let written = self.file.write(buf)?;
-                            let _ = std::io::stderr().write_all(buf);
-                            Ok(written)
-                        }
-                        fn flush(&mut self) -> std::io::Result<()> {
-                            self.file.flush()?;
-                            std::io::stderr().flush()
-                        }
-                    }
-                    builder.target(Target::Pipe(Box::new(DualWriter { file: log_file })));
-                } else {
+                    Err(_) => {
                     // 如果文件打开失败，只输出到 stderr
                     builder.target(Target::Stderr);
-                }
+                    }
+                };
             } else {
                 // 没有指定文件路径，只输出到 stderr
                 builder.target(Target::Stderr);

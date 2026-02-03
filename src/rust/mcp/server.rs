@@ -7,12 +7,15 @@ use rmcp::{
 };
 use rmcp::model::*;
 use std::collections::HashMap;
+use std::time::Instant;
 
 use super::tools::{InteractionTool, MemoryTool, AcemcpTool, Context7Tool, IconTool, SkillsTool, UiuxTool, EnhanceTool};
 use super::types::{ZhiRequest, JiyiRequest, TuRequest, SkillRunRequest};
 use crate::mcp::tools::enhance::mcp::EnhanceMcpRequest;
 use crate::mcp::tools::context7::types::Context7Request;
 use crate::config::load_standalone_config;
+use crate::mcp::utils::safe_truncate_clean;
+use crate::mcp::utils::generate_request_id;
 use crate::{log_important, log_debug};
 
 #[derive(Clone)]
@@ -234,156 +237,218 @@ impl ServerHandler for ZhiServer {
         request: CallToolRequestParam,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        log_debug!("收到工具调用请求: {}", request.name);
+        let call_id = generate_request_id();
+        let start = Instant::now();
 
-        match request.name.as_ref() {
+        let tool_name = request.name.to_string();
+        let arg_keys: Vec<String> = request
+            .arguments
+            .as_ref()
+            .map(|m| m.keys().cloned().collect())
+            .unwrap_or_default();
+
+        // 解析参数（保持与旧逻辑一致：None -> 空对象）
+        let arguments_value = request.arguments
+            .map(serde_json::Value::Object)
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+        // 统一入口日志（全链路追踪用）
+        log_important!(
+            info,
+            "[MCP] 调用开始: call_id={}, tool={}, arg_keys={:?}",
+            call_id,
+            tool_name,
+            arg_keys
+        );
+
+        // 常见字段摘要（避免打印完整内容导致日志膨胀/泄露）
+        if let Some(obj) = arguments_value.as_object() {
+            for k in ["message", "prompt", "query", "content"] {
+                if let Some(s) = obj.get(k).and_then(|v| v.as_str()) {
+                    log_debug!(
+                        "[MCP] 参数摘要: call_id={}, tool={}, {}_len={}, {}_preview={}",
+                        call_id,
+                        tool_name,
+                        k,
+                        s.len(),
+                        k,
+                        safe_truncate_clean(s, 200)
+                    );
+                }
+            }
+        }
+
+        let result: Result<CallToolResult, McpError> = match tool_name.as_str() {
             "zhi" => {
-                // 解析请求参数
-                let arguments_value = request.arguments
-                    .map(serde_json::Value::Object)
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-
-                let zhi_request: ZhiRequest = serde_json::from_value(arguments_value)
-                    .map_err(|e| McpError::invalid_params(format!("参数解析失败: {}", e), None))?;
-
-                // 调用三术工具
-                InteractionTool::zhi(zhi_request).await
+                match serde_json::from_value::<ZhiRequest>(arguments_value) {
+                    Ok(zhi_request) => {
+                        // 调用三术工具（将 call_id 作为 request.id 贯穿到 GUI/响应）
+                        InteractionTool::zhi_with_request_id(zhi_request, call_id.clone()).await
+                    }
+                    Err(e) => {
+                        log_important!(
+                            warn,
+                            "[MCP] 参数解析失败: call_id={}, tool=zhi, error={}",
+                            call_id,
+                            e
+                        );
+                        Err(McpError::invalid_params(format!("参数解析失败: {}", e), None))
+                    }
+                }
             }
             "ji" => {
-                // 检查记忆管理工具是否启用
                 if !self.is_tool_enabled("ji") {
-                    return Err(McpError::internal_error(
-                        "记忆管理工具已被禁用".to_string(),
-                        None
-                    ));
+                    log_important!(warn, "[MCP] 工具已禁用: call_id={}, tool=ji", call_id);
+                    Err(McpError::internal_error("记忆管理工具已被禁用".to_string(), None))
+                } else {
+                    match serde_json::from_value::<JiyiRequest>(arguments_value) {
+                        Ok(ji_request) => MemoryTool::jiyi(ji_request).await,
+                        Err(e) => {
+                            log_important!(
+                                warn,
+                                "[MCP] 参数解析失败: call_id={}, tool=ji, error={}",
+                                call_id,
+                                e
+                            );
+                            Err(McpError::invalid_params(format!("参数解析失败: {}", e), None))
+                        }
+                    }
                 }
-
-                // 解析请求参数
-                let arguments_value = request.arguments
-                    .map(serde_json::Value::Object)
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-
-                let ji_request: JiyiRequest = serde_json::from_value(arguments_value)
-                    .map_err(|e| McpError::invalid_params(format!("参数解析失败: {}", e), None))?;
-
-                // 调用记忆工具
-                MemoryTool::jiyi(ji_request).await
             }
             "sou" => {
-                // 检查代码搜索工具是否启用
                 if !self.is_tool_enabled("sou") {
-                    return Err(McpError::internal_error(
-                        "代码搜索工具已被禁用".to_string(),
-                        None
-                    ));
+                    log_important!(warn, "[MCP] 工具已禁用: call_id={}, tool=sou", call_id);
+                    Err(McpError::internal_error("代码搜索工具已被禁用".to_string(), None))
+                } else {
+                    match serde_json::from_value::<crate::mcp::tools::acemcp::types::AcemcpRequest>(arguments_value) {
+                        Ok(acemcp_request) => AcemcpTool::search_context(acemcp_request).await,
+                        Err(e) => {
+                            log_important!(
+                                warn,
+                                "[MCP] 参数解析失败: call_id={}, tool=sou, error={}",
+                                call_id,
+                                e
+                            );
+                            Err(McpError::invalid_params(format!("参数解析失败: {}", e), None))
+                        }
+                    }
                 }
-
-                // 解析请求参数
-                let arguments_value = request.arguments
-                    .map(serde_json::Value::Object)
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-
-                // 使用acemcp模块中的AcemcpRequest类型
-                let acemcp_request: crate::mcp::tools::acemcp::types::AcemcpRequest = serde_json::from_value(arguments_value)
-                    .map_err(|e| McpError::invalid_params(format!("参数解析失败: {}", e), None))?;
-
-                // 调用代码搜索工具
-                AcemcpTool::search_context(acemcp_request).await
             }
             "context7" => {
-                // 检查 Context7 工具是否启用
                 if !self.is_tool_enabled("context7") {
-                    return Err(McpError::internal_error(
-                        "Context7 文档查询工具已被禁用".to_string(),
-                        None
-                    ));
+                    log_important!(warn, "[MCP] 工具已禁用: call_id={}, tool=context7", call_id);
+                    Err(McpError::internal_error("Context7 文档查询工具已被禁用".to_string(), None))
+                } else {
+                    match serde_json::from_value::<Context7Request>(arguments_value) {
+                        Ok(context7_request) => Context7Tool::query_docs(context7_request).await,
+                        Err(e) => {
+                            log_important!(
+                                warn,
+                                "[MCP] 参数解析失败: call_id={}, tool=context7, error={}",
+                                call_id,
+                                e
+                            );
+                            Err(McpError::invalid_params(format!("参数解析失败: {}", e), None))
+                        }
+                    }
                 }
-
-                // 解析请求参数
-                let arguments_value = request.arguments
-                    .map(serde_json::Value::Object)
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-
-                let context7_request: Context7Request = serde_json::from_value(arguments_value)
-                    .map_err(|e| McpError::invalid_params(format!("参数解析失败: {}", e), None))?;
-
-                // 调用 Context7 工具
-                Context7Tool::query_docs(context7_request).await
             }
             "tu" => {
-                // 检查图标工坊工具是否启用
                 if !self.is_tool_enabled("icon") {
-                    return Err(McpError::internal_error(
-                        "图标工坊工具已被禁用".to_string(),
-                        None
-                    ));
+                    log_important!(warn, "[MCP] 工具已禁用: call_id={}, tool=tu(icon)", call_id);
+                    Err(McpError::internal_error("图标工坊工具已被禁用".to_string(), None))
+                } else {
+                    match serde_json::from_value::<TuRequest>(arguments_value) {
+                        Ok(tu_request) => IconTool::tu(tu_request).await,
+                        Err(e) => {
+                            log_important!(
+                                warn,
+                                "[MCP] 参数解析失败: call_id={}, tool=tu, error={}",
+                                call_id,
+                                e
+                            );
+                            Err(McpError::invalid_params(format!("参数解析失败: {}", e), None))
+                        }
+                    }
                 }
-
-                // 解析请求参数
-                let arguments_value = request.arguments
-                    .map(serde_json::Value::Object)
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-
-                let tu_request: TuRequest = serde_json::from_value(arguments_value)
-                    .map_err(|e| McpError::invalid_params(format!("参数解析失败: {}", e), None))?;
-
-                // 调用图标工坊工具
-                IconTool::tu(tu_request).await
             }
             // 兼容 Antigravity：UI/UX 工具名使用下划线分隔
             name if name.starts_with("uiux_") => {
                 if !self.is_tool_enabled("uiux") {
-                    return Err(McpError::internal_error(
-                        "UI/UX 工具已被禁用".to_string(),
-                        None
-                    ));
+                    log_important!(warn, "[MCP] 工具已禁用: call_id={}, tool=uiux", call_id);
+                    Err(McpError::internal_error("UI/UX 工具已被禁用".to_string(), None))
+                } else {
+                    UiuxTool::call_tool(name, arguments_value).await
                 }
-
-                let arguments_value = request.arguments
-                    .map(serde_json::Value::Object)
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-
-                UiuxTool::call_tool(name, arguments_value).await
             }
             name if name == "skill_run" || name.starts_with("skill_") => {
-                // 解析请求参数
-                let arguments_value = request.arguments
-                    .map(serde_json::Value::Object)
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-
-                let skill_request: SkillRunRequest = serde_json::from_value(arguments_value)
-                    .map_err(|e| McpError::invalid_params(format!("参数解析失败: {}", e), None))?;
-
-                let project_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-                SkillsTool::call_tool(name, skill_request, &project_root).await
+                match serde_json::from_value::<SkillRunRequest>(arguments_value) {
+                    Ok(skill_request) => {
+                        let project_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                        SkillsTool::call_tool(name, skill_request, &project_root).await
+                    }
+                    Err(e) => {
+                        log_important!(
+                            warn,
+                            "[MCP] 参数解析失败: call_id={}, tool={}, error={}",
+                            call_id,
+                            name,
+                            e
+                        );
+                        Err(McpError::invalid_params(format!("参数解析失败: {}", e), None))
+                    }
+                }
             }
             "enhance" => {
-                // 检查增强工具是否启用
                 if !self.is_tool_enabled("enhance") {
-                    return Err(McpError::internal_error(
-                        "提示词增强工具已被禁用".to_string(),
-                        None
-                    ));
+                    log_important!(warn, "[MCP] 工具已禁用: call_id={}, tool=enhance", call_id);
+                    Err(McpError::internal_error("提示词增强工具已被禁用".to_string(), None))
+                } else {
+                    match serde_json::from_value::<EnhanceMcpRequest>(arguments_value) {
+                        Ok(enhance_request) => EnhanceTool::enhance(enhance_request).await,
+                        Err(e) => {
+                            log_important!(
+                                warn,
+                                "[MCP] 参数解析失败: call_id={}, tool=enhance, error={}",
+                                call_id,
+                                e
+                            );
+                            Err(McpError::invalid_params(format!("参数解析失败: {}", e), None))
+                        }
+                    }
                 }
-
-                // 解析请求参数
-                let arguments_value = request.arguments
-                    .map(serde_json::Value::Object)
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-
-                let enhance_request: EnhanceMcpRequest = serde_json::from_value(arguments_value)
-                    .map_err(|e| McpError::invalid_params(format!("参数解析失败: {}", e), None))?;
-
-                // 调用提示词增强工具
-                EnhanceTool::enhance(enhance_request).await
             }
-            _ => {
-                Err(McpError::invalid_request(
-                    format!("未知的工具: {}", request.name),
-                    None
-                ))
+            _ => Err(McpError::invalid_request(format!("未知的工具: {}", tool_name), None)),
+        };
+
+        // 统一出口日志（全链路追踪用）
+        let elapsed_ms = start.elapsed().as_millis();
+        match &result {
+            Ok(r) => {
+                let is_error = r.is_error.unwrap_or(false);
+                log_important!(
+                    info,
+                    "[MCP] 调用结束: call_id={}, tool={}, is_error={}, content_items={}, elapsed_ms={}",
+                    call_id,
+                    tool_name,
+                    is_error,
+                    r.content.len(),
+                    elapsed_ms
+                );
+            }
+            Err(e) => {
+                log_important!(
+                    error,
+                    "[MCP] 调用失败: call_id={}, tool={}, elapsed_ms={}, error={}",
+                    call_id,
+                    tool_name,
+                    elapsed_ms,
+                    e
+                );
             }
         }
+
+        result
     }
 }
 

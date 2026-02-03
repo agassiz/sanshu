@@ -15,6 +15,26 @@ use super::mcp::update_index;
 use crate::log_important;
 use crate::log_debug;
 
+/// 规范化项目路径（去除 Windows 扩展路径前缀并统一使用正斜杠）
+///
+/// 说明：notify / canonicalize 在 Windows 下可能返回 `//?/C:/...` 或 `\\?\\C:\\...`，
+/// 这会导致字符串前缀匹配失败（进而无法路由到正确的嵌套子项目）。
+fn normalize_project_path(path: &str) -> String {
+    let mut p = path.to_string();
+
+    // 处理 //?/ 格式（canonicalize 在某些情况下返回）
+    if p.starts_with("//?/") {
+        p = p[4..].to_string();
+    }
+    // 处理 \\?\ 格式（Windows 扩展路径语法）
+    else if p.starts_with("\\\\?\\") {
+        p = p[4..].to_string();
+    }
+
+    // 统一使用正斜杠
+    p.replace('\\', "/")
+}
+
 /// 嵌套项目监听信息
 #[derive(Debug, Clone)]
 struct NestedWatchInfo {
@@ -101,7 +121,7 @@ impl WatcherManager {
 
         for path in changed_paths {
             // 规范化变更文件路径
-            let path_str = path.to_string_lossy().replace('\\', "/");
+            let path_str = normalize_project_path(&path.to_string_lossy());
 
             // 找到包含此路径的子项目（最长前缀匹配）
             let mut matched_project: Option<&str> = None;
@@ -109,11 +129,15 @@ impl WatcherManager {
 
             for info in nested_infos {
                 // 检查路径是否属于此子项目
-                if path_str.starts_with(&info.absolute_path) 
-                   && info.absolute_path.len() > matched_len 
-                {
+                let prefix = info.absolute_path.as_str();
+                let is_prefix = path_str.starts_with(prefix);
+                // 路径边界校验：避免 `.../foo-bar` 被误判为 `.../foo`
+                let boundary_ok = path_str.len() == prefix.len()
+                    || path_str.as_bytes().get(prefix.len()) == Some(&b'/');
+
+                if is_prefix && boundary_ok && prefix.len() > matched_len {
                     matched_project = Some(&info.absolute_path);
-                    matched_len = info.absolute_path.len();
+                    matched_len = prefix.len();
                 }
             }
 
@@ -147,9 +171,7 @@ impl WatcherManager {
         let watch_path = PathBuf::from(&project_root)
             .canonicalize()
             .unwrap_or_else(|_| PathBuf::from(&project_root));
-        let normalized_root = watch_path
-            .to_string_lossy()
-            .replace('\\', "/");
+        let normalized_root = normalize_project_path(&watch_path.to_string_lossy());
 
         // 检查是否已经在监听
         {
@@ -298,11 +320,12 @@ impl WatcherManager {
 
     /// 停止监听指定项目
     pub fn stop_watching(&self, project_root: &str) -> Result<()> {
-        let normalized_root = PathBuf::from(project_root)
-            .canonicalize()
-            .unwrap_or_else(|_| PathBuf::from(project_root))
-            .to_string_lossy()
-            .replace('\\', "/");
+        let normalized_root = normalize_project_path(
+            &PathBuf::from(project_root)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(project_root))
+                .to_string_lossy()
+        );
 
         // 清理嵌套项目映射
         {
@@ -341,11 +364,12 @@ impl WatcherManager {
 
     /// 检查指定项目是否正在监听
     pub fn is_watching(&self, project_root: &str) -> bool {
-        let normalized_root = PathBuf::from(project_root)
-            .canonicalize()
-            .unwrap_or_else(|_| PathBuf::from(project_root))
-            .to_string_lossy()
-            .replace('\\', "/");
+        let normalized_root = normalize_project_path(
+            &PathBuf::from(project_root)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(project_root))
+                .to_string_lossy()
+        );
 
         let watchers = self.watchers.lock().unwrap();
         watchers.contains_key(&normalized_root)

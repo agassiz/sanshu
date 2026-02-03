@@ -2,23 +2,33 @@ use anyhow::Result;
 use rmcp::model::{ErrorData as McpError, Content};
 
 use crate::mcp::types::{McpResponse, McpResponseContent};
+use crate::log_debug;
 
 /// 解析 MCP 响应内容
 ///
 /// 支持新的结构化格式和旧格式的兼容性，并生成适当的 Content 对象
 pub fn parse_mcp_response(response: &str) -> Result<Vec<Content>, McpError> {
     if response.trim() == "CANCELLED" || response.trim() == "用户取消了操作" {
+        log_debug!("[parse_mcp_response] 收到取消信号");
         return Ok(vec![Content::text("用户取消了操作".to_string())]);
     }
 
     // 首先尝试解析为新的结构化格式
     if let Ok(structured_response) = serde_json::from_str::<McpResponse>(response) {
+        log_debug!(
+            "[parse_mcp_response] 结构化响应: selected_options={}, images={}, request_id={:?}, source={:?}",
+            structured_response.selected_options.len(),
+            structured_response.images.len(),
+            structured_response.metadata.request_id.as_deref(),
+            structured_response.metadata.source.as_deref()
+        );
         return parse_structured_response(structured_response);
     }
 
     // 回退到旧格式兼容性解析
     match serde_json::from_str::<Vec<McpResponseContent>>(response) {
         Ok(content_array) => {
+            log_debug!("[parse_mcp_response] 旧格式响应数组: items={}", content_array.len());
             let mut result = Vec::new();
             let mut image_count = 0;
 
@@ -107,10 +117,16 @@ pub fn parse_mcp_response(response: &str) -> Result<Vec<Content>, McpError> {
                 result.push(Content::text("用户未提供任何内容".to_string()));
             }
 
+            log_debug!(
+                "[parse_mcp_response] 旧格式解析完成: images={}, content_items={}",
+                image_count,
+                result.len()
+            );
             Ok(result)
         }
         Err(_) => {
             // 如果不是JSON格式，作为纯文本处理
+            log_debug!("[parse_mcp_response] 非JSON响应，按纯文本处理: len={}", response.len());
             Ok(vec![Content::text(response.to_string())])
         }
     }

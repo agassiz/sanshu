@@ -80,7 +80,10 @@ pub async fn save_acemcp_config(
         config.mcp_config.acemcp_proxy_username = args.proxy_username.clone();
         config.mcp_config.acemcp_proxy_password = args.proxy_password.clone();
         // 保存嵌套项目索引开关
-        config.mcp_config.acemcp_index_nested_projects = args.index_nested_projects;
+        // 仅在前端显式传入时才覆盖，避免其他页面保存配置时将用户设置重置为默认值
+        if let Some(v) = args.index_nested_projects {
+            config.mcp_config.acemcp_index_nested_projects = Some(v);
+        }
     }
 
     save_config(&state, &app)
@@ -303,30 +306,58 @@ pub async fn read_acemcp_logs(_state: State<'_, AppState>) -> Result<Vec<String>
         }
     }
 
-    // 如果日志文件不存在，返回空数组
-    if !log_path.exists() {
+    // 读取当前日志 + 轮转备份（acemcp.log.1, acemcp.log.2 ...），返回最后 1000 行
+    // 中文说明：使用流式读取避免在日志很大时一次性读入内存。
+    use std::collections::VecDeque;
+    use std::io::{BufRead, BufReader};
+
+    let max_lines: usize = 1000;
+    let max_backups: usize = crate::utils::logger::LogRotationConfig::default().max_backup_count as usize;
+
+    let log_dir = log_path
+        .parent()
+        .ok_or_else(|| format!("日志路径无效: {}", log_path.display()))?;
+    let log_name = log_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("acemcp.log");
+
+    let mut candidates = Vec::new();
+    // 从最旧备份到最新：.N ... .1
+    for i in (1..=max_backups).rev() {
+        candidates.push(log_dir.join(format!("{}.{}", log_name, i)));
+    }
+    // 最后读取当前文件
+    candidates.push(log_path.clone());
+
+    let mut buf: VecDeque<String> = VecDeque::with_capacity(max_lines);
+    let mut any_exists = false;
+
+    for path in candidates {
+        if !path.exists() {
+            continue;
+        }
+        any_exists = true;
+
+        // 轮转/写入过程中可能出现短暂的占用或读取失败，这里采用 best-effort：跳过无法读取的文件。
+        let file = match std::fs::File::open(&path) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        let reader = BufReader::new(file);
+        for line in reader.lines().flatten() {
+            if buf.len() == max_lines {
+                buf.pop_front();
+            }
+            buf.push_back(line);
+        }
+    }
+
+    if !any_exists {
         return Ok(vec![]);
     }
 
-    // 读取日志文件内容
-    let content = std::fs::read_to_string(&log_path)
-        .map_err(|e| format!("读取日志文件失败: {} (路径: {})", e, log_path.display()))?;
-
-    // 返回最近1000行日志
-    let all_lines: Vec<String> = content
-        .lines()
-        .map(|s| s.to_string())
-        .collect();
-
-    // 只返回最后1000行
-    let lines: Vec<String> = if all_lines.len() > 1000 {
-        let skip_count = all_lines.len() - 1000;
-        all_lines.into_iter().skip(skip_count).collect()
-    } else {
-        all_lines
-    };
-
-    Ok(lines)
+    Ok(buf.into_iter().collect())
 }
 
 #[tauri::command]

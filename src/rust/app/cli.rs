@@ -9,10 +9,12 @@ use anyhow::Result;
 /// 处理命令行参数
 pub fn handle_cli_args() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    crate::log_debug!("CLI启动参数: {:?}", args);
 
     match args.len() {
         // 无参数：正常启动GUI
         1 => {
+            crate::log_debug!("进入GUI模式（无参数）");
             run_tauri_app();
         }
         // 单参数：帮助或版本
@@ -31,6 +33,7 @@ pub fn handle_cli_args() -> Result<()> {
         _ => {
             if args[1] == "--mcp-request" {
                 if args.len() >= 3 {
+                    crate::log_important!(info, "进入MCP请求模式: request_file={}", args[2]);
                     handle_mcp_request(&args[2])?;
                 } else {
                     eprintln!("缺少必填参数: --mcp-request <文件>");
@@ -39,9 +42,11 @@ pub fn handle_cli_args() -> Result<()> {
                 }
             } else if args[1] == "--cli" {
                 // CLI 模式：解析参数并启动 GUI 交互
+                crate::log_important!(info, "进入CLI交互模式（--cli）");
                 handle_cli_mode(&args[2..])?;
             } else if args[1] == "--icon-search" {
                 // 图标搜索模式：解析参数并启动 GUI
+                crate::log_important!(info, "进入图标搜索模式（--icon-search）");
                 handle_icon_search(&args[2..])?;
             } else {
                 eprintln!("无效的命令行参数");
@@ -187,11 +192,16 @@ fn split_cli_options(raw: &str) -> Vec<String> {
 
 /// 处理MCP请求
 fn handle_mcp_request(request_file: &str) -> Result<()> {
+    log_important!(info, "[handle_mcp_request] 收到请求文件: {}", request_file);
     // 检查Telegram配置，决定是否启用纯Telegram模式
     match load_standalone_telegram_config() {
         Ok(telegram_config) => {
             if telegram_config.enabled && telegram_config.hide_frontend_popup {
                 // 纯Telegram模式：不启动GUI，直接处理
+                log_important!(
+                    info,
+                    "[handle_mcp_request] 进入纯Telegram模式（hide_frontend_popup=true）"
+                );
                 if let Err(e) = tokio::runtime::Runtime::new()
                     .unwrap()
                     .block_on(handle_telegram_only_mcp_request(request_file))
@@ -201,6 +211,12 @@ fn handle_mcp_request(request_file: &str) -> Result<()> {
                 }
             } else {
                 // 正常模式：启动GUI处理弹窗
+                log_important!(
+                    info,
+                    "[handle_mcp_request] 进入GUI模式处理弹窗（telegram_enabled={}, hide_frontend_popup={}）",
+                    telegram_config.enabled,
+                    telegram_config.hide_frontend_popup
+                );
                 run_tauri_app();
             }
         }
