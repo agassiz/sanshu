@@ -36,6 +36,23 @@ Here is my original instruction:
 const MAX_ZHI_HISTORY_ENTRIES: usize = 5;
 /// 单条摘要最大字符数（避免提示词过长）
 const MAX_ZHI_HISTORY_TEXT_LEN: usize = 200;
+/// 历史兜底文本最大字符数（避免重复注入导致提示词过长）
+const MAX_FALLBACK_HISTORY_TEXT_LEN: usize = 500;
+
+#[derive(Debug, Clone, Default)]
+struct HistoryBuildDiagnostics {
+    /// 实际从磁盘加载到的历史条数（不包含兜底）
+    loaded_count: usize,
+    /// 历史加载失败原因（用于区分“空/失败”）
+    load_error: Option<String>,
+    /// 是否启用了“历史为空兜底”（即使 loaded_count 为 0，也会提供临时上下文）
+    fallback_used: bool,
+}
+
+struct BuildPayloadResult {
+    payload: serde_json::Value,
+    history_diag: HistoryBuildDiagnostics,
+}
 
 /// 提示词增强器
 pub struct PromptEnhancer {
@@ -50,6 +67,33 @@ pub struct PromptEnhancer {
 }
 
 impl PromptEnhancer {
+    /// 中文注释：清理 Windows 长路径前缀并统一为正斜杠，用于匹配/展示
+    fn clean_path_prefix_and_slashes(path: &str) -> String {
+        let mut p = path.trim().to_string();
+
+        // 处理 Windows 扩展路径语法：\\?\C:\... 或 \\?\UNC\server\share\...
+        if p.starts_with("\\\\?\\UNC\\") {
+            // \\?\UNC\server\share\path -> \\server\share\path
+            p = format!("\\\\{}", &p[8..]);
+        } else if p.starts_with("\\\\?\\") {
+            p = p[4..].to_string();
+        }
+
+        // 统一使用正斜杠
+        p = p.replace('\\', "/");
+
+        // 再处理 //?/（canonicalize/序列化后可能出现）
+        if p.starts_with("//?/UNC/") {
+            // //?/UNC/server/share/path -> //server/share/path
+            p = format!("//{}", &p[8..]);
+        } else if p.starts_with("//?/") {
+            p = p[4..].to_string();
+        }
+
+        // 去除末尾斜杠，避免匹配与显示误差
+        p.trim_end_matches('/').to_string()
+    }
+
     /// 创建增强器实例
     pub fn new(base_url: &str, token: &str) -> Result<Self> {
         let client = Client::builder()
@@ -91,12 +135,12 @@ impl PromptEnhancer {
         };
 
         // 规范化项目路径（去除末尾斜杠，避免匹配失败）
-        let normalized_root = PathBuf::from(&project_root)
+        let canonical_root = PathBuf::from(&project_root)
             .canonicalize()
             .unwrap_or_else(|_| PathBuf::from(&project_root))
             .to_string_lossy()
-            .replace('\\', "/");
-        let normalized_root = normalized_root.trim_end_matches('/').to_string();
+            .to_string();
+        let normalized_root = Self::clean_path_prefix_and_slashes(&canonical_root);
 
         // 优先读取 acemcp 的 projects.json，兼容旧的 .sanshu/projects.json
         let mut candidates = Vec::new();
@@ -151,14 +195,19 @@ impl PromptEnhancer {
         projects: &ProjectsFile,
         normalized_root: &str,
     ) -> Option<(Vec<String>, String)> {
+        // 1) 直接匹配
         if let Some(names) = projects.0.get(normalized_root) {
-            return Some((names.clone(), normalized_root.to_string()));
+            return Some((names.clone(), Self::clean_path_prefix_and_slashes(normalized_root)));
         }
 
+        // 2) Windows 下：忽略大小写 + 兼容 keys 带长路径前缀的情况
         if cfg!(windows) {
+            let target = normalized_root.to_lowercase();
             for (key, names) in projects.0.iter() {
-                if key.eq_ignore_ascii_case(normalized_root) {
-                    return Some((names.clone(), key.clone()));
+                // 中文注释：对 key 也做同样清理，避免 legacy projects.json 中残留 //?/ 前缀
+                let key_clean = Self::clean_path_prefix_and_slashes(key);
+                if key_clean.to_lowercase() == target {
+                    return Some((names.clone(), key_clean));
                 }
             }
         }
@@ -167,27 +216,76 @@ impl PromptEnhancer {
     }
 
     /// 加载对话历史
-    fn load_chat_history(&self, count: usize, selected_ids: Option<&[String]>) -> Vec<ChatHistoryEntry> {
+    fn load_chat_history(&self, count: usize, selected_ids: Option<&[String]>) -> (Vec<ChatHistoryEntry>, Option<String>) {
         let project_root = match &self.project_root {
             Some(path) => path.clone(),
-            None => return Vec::new(),
+            None => return (Vec::new(), None),
         };
 
         match ChatHistoryManager::new(&project_root) {
             Ok(manager) => {
                 if let Some(ids) = selected_ids {
                     if ids.is_empty() {
-                        return Vec::new();
+                        return (Vec::new(), None);
                     }
-                    return manager.to_api_format_by_ids(ids);
+                    return match manager.to_api_format_by_ids(ids) {
+                        Ok(v) => (v, None),
+                        Err(e) => {
+                            log_debug!("加载对话历史失败: {}", e);
+                            (Vec::new(), Some(e.to_string()))
+                        }
+                    };
                 }
-                manager.to_api_format(count)
+                match manager.to_api_format(count) {
+                    Ok(v) => (v, None),
+                    Err(e) => {
+                        log_debug!("加载对话历史失败: {}", e);
+                        (Vec::new(), Some(e.to_string()))
+                    }
+                }
             },
             Err(e) => {
                 log_debug!("加载对话历史失败: {}", e);
-                Vec::new()
+                (Vec::new(), Some(e.to_string()))
             }
         }
+    }
+
+    /// 构造“历史为空兜底”的临时历史条目
+    fn build_fallback_history_entry(prompt: &str) -> Option<ChatHistoryEntry> {
+        let prompt = prompt.trim();
+        if prompt.is_empty() {
+            return None;
+        }
+
+        // 中文注释：截断兜底内容，避免重复注入导致提示词过长
+        let prompt = Self::truncate_text(prompt, MAX_FALLBACK_HISTORY_TEXT_LEN);
+        let request_id = format!("fallback_{}", uuid::Uuid::new_v4());
+
+        Some(ChatHistoryEntry {
+            request_message: prompt.clone(),
+            request_id: request_id.clone(),
+            request_nodes: vec![
+                ChatHistoryRequestNode {
+                    id: 0,
+                    node_type: 0,
+                    text_node: Some(TextNode { content: prompt.clone() }),
+                }
+            ],
+            // 中文注释：兜底场景无真实 AI 回复，使用空字符串占位，避免破坏 API 结构
+            response_nodes: vec![
+                ChatHistoryResponseNode {
+                    id: 1,
+                    node_type: 0,
+                    content: Some(String::new()),
+                    tool_use: None,
+                    thinking: None,
+                    billing_metadata: None,
+                    metadata: None,
+                    token_usage: None,
+                }
+            ],
+        })
     }
 
     /// 截断并清理文本（避免换行和过长内容）
@@ -248,19 +346,31 @@ impl PromptEnhancer {
     fn build_request_payload(
         &self,
         prompt: &str,
+        original_prompt: Option<&str>,
         current_file: Option<&str>,
         include_history: bool,
         selected_history_ids: Option<&[String]>,
         blob_names: &[String],
-    ) -> serde_json::Value {
+    ) -> BuildPayloadResult {
         // 支持按 ID 过滤对话历史，未指定则使用最近历史
         let history_enabled = include_history
             && selected_history_ids.map(|ids| !ids.is_empty()).unwrap_or(true);
-        let chat_history = if history_enabled {
+        let (mut chat_history, history_load_error) = if history_enabled {
             self.load_chat_history(5, selected_history_ids) // 最多5条历史
         } else {
-            Vec::new()
+            (Vec::new(), None)
         };
+        let loaded_history_count = chat_history.len();
+
+        // 中文注释：兜底——历史为空时，用当前输入构造 1 条临时历史，确保上下文链路不断
+        let mut history_fallback_used = false;
+        if history_enabled && chat_history.is_empty() {
+            let fallback_text = original_prompt.unwrap_or(prompt);
+            if let Some(entry) = Self::build_fallback_history_entry(fallback_text) {
+                chat_history.push(entry);
+                history_fallback_used = true;
+            }
+        }
 
         let (zhi_summary, zhi_count) = if history_enabled {
             self.build_zhi_history_summary(MAX_ZHI_HISTORY_ENTRIES)
@@ -270,9 +380,10 @@ impl PromptEnhancer {
 
         log_important!(
             info,
-            "构建增强请求: blob_count={}, history_count={}, zhi_history_count={}",
+            "构建增强请求: blob_count={}, history_count={}, history_fallback_used={}, zhi_history_count={}",
             blob_names.len(),
-            chat_history.len(),
+            loaded_history_count,
+            history_fallback_used,
             zhi_count
         );
 
@@ -286,7 +397,7 @@ impl PromptEnhancer {
         }
         full_message.push_str(prompt);
 
-        json!({
+        let payload = json!({
             "model": "claude-sonnet-4-5",
             "path": current_file.unwrap_or(""),
             "prefix": null,
@@ -328,7 +439,16 @@ impl PromptEnhancer {
             "third_party_override": null,
             "conversation_id": uuid::Uuid::new_v4().to_string(),
             "canvas_id": null
-        })
+        });
+
+        BuildPayloadResult {
+            payload,
+            history_diag: HistoryBuildDiagnostics {
+                loaded_count: loaded_history_count,
+                load_error: history_load_error,
+                fallback_used: history_fallback_used,
+            },
+        }
     }
 
     /// 从响应文本中提取增强后的提示词
@@ -377,18 +497,21 @@ impl PromptEnhancer {
         let blob_count = blob_names.len();
         let project_root_path = request.project_root_path.clone().or(self.project_root.clone());
 
-        let payload = self.build_request_payload(
+        let build = self.build_request_payload(
             &request.prompt,
+            request.original_prompt.as_deref(),
             request.current_file_path.as_deref(),
             request.include_history,
             request.selected_history_ids.as_deref(),
             &blob_names,
         );
-
-        let history_count = payload.get("chat_history")
-            .and_then(|h| h.as_array())
-            .map(|a| a.len())
-            .unwrap_or(0);
+        let history_count = build.history_diag.loaded_count;
+        let history_load_error = build.history_diag.load_error.clone();
+        let history_fallback_used = build.history_diag.fallback_used;
+        let payload = build.payload;
+        // 中文注释：返回给前端的“原始提示词”优先使用传入的 original_prompt
+        let response_original_prompt = request.original_prompt.clone()
+            .unwrap_or_else(|| request.prompt.clone());
 
         let url = format!("{}/chat-stream", self.base_url);
         log_important!(info, "发送增强请求: url={}", url);
@@ -406,11 +529,13 @@ impl PromptEnhancer {
             let body = response.text().await.unwrap_or_default();
             return Ok(EnhanceResponse {
                 enhanced_prompt: String::new(),
-                original_prompt: request.prompt,
+                original_prompt: response_original_prompt.clone(),
                 success: false,
                 error: Some(format!("HTTP {} - {}", status, body)),
                 blob_count,
                 history_count,
+                history_load_error,
+                history_fallback_used,
                 project_root_path,
                 blob_source_root,
                 request_id: Some(request_id),
@@ -457,11 +582,13 @@ impl PromptEnhancer {
 
         Ok(EnhanceResponse {
             enhanced_prompt,
-            original_prompt: request.prompt,
+            original_prompt: response_original_prompt,
             success,
             error: if success { None } else { Some("未能从响应中提取增强结果".to_string()) },
             blob_count,
             history_count,
+            history_load_error,
+            history_fallback_used,
             project_root_path,
             blob_source_root,
             request_id: Some(request_id),
@@ -483,18 +610,21 @@ impl PromptEnhancer {
         let blob_count = blob_names.len();
         let project_root_path = request.project_root_path.clone().or(self.project_root.clone());
 
-        let payload = self.build_request_payload(
+        let build = self.build_request_payload(
             &request.prompt,
+            request.original_prompt.as_deref(),
             request.current_file_path.as_deref(),
             request.include_history,
             request.selected_history_ids.as_deref(),
             &blob_names,
         );
-
-        let history_count = payload.get("chat_history")
-            .and_then(|h| h.as_array())
-            .map(|a| a.len())
-            .unwrap_or(0);
+        let history_count = build.history_diag.loaded_count;
+        let history_load_error = build.history_diag.load_error.clone();
+        let history_fallback_used = build.history_diag.fallback_used;
+        let payload = build.payload;
+        // 中文注释：返回给前端的“原始提示词”优先使用传入的 original_prompt
+        let response_original_prompt = request.original_prompt.clone()
+            .unwrap_or_else(|| request.prompt.clone());
 
         let url = format!("{}/chat-stream", self.base_url);
         log_important!(info, "发送流式增强请求: url={}", url);
@@ -514,11 +644,13 @@ impl PromptEnhancer {
             on_event(EnhanceStreamEvent::error(&request_id, &error_msg));
             return Ok(EnhanceResponse {
                 enhanced_prompt: String::new(),
-                original_prompt: request.prompt,
+                original_prompt: response_original_prompt.clone(),
                 success: false,
                 error: Some(error_msg),
                 blob_count,
                 history_count,
+                history_load_error,
+                history_fallback_used,
                 project_root_path,
                 blob_source_root,
                 request_id: Some(request_id),
@@ -584,11 +716,13 @@ impl PromptEnhancer {
             on_event(EnhanceStreamEvent::error(&request_id, &cancel_msg));
             return Ok(EnhanceResponse {
                 enhanced_prompt: String::new(),
-                original_prompt: request.prompt,
+                original_prompt: response_original_prompt.clone(),
                 success: false,
                 error: Some(cancel_msg),
                 blob_count,
                 history_count,
+                history_load_error,
+                history_fallback_used,
                 project_root_path,
                 blob_source_root,
                 request_id: Some(request_id),
@@ -597,11 +731,13 @@ impl PromptEnhancer {
         if stream_failed {
             return Ok(EnhanceResponse {
                 enhanced_prompt: String::new(),
-                original_prompt: request.prompt,
+                original_prompt: response_original_prompt.clone(),
                 success: false,
                 error: stream_error.or_else(|| Some("读取流式响应失败".to_string())),
                 blob_count,
                 history_count,
+                history_load_error,
+                history_fallback_used,
                 project_root_path,
                 blob_source_root,
                 request_id: Some(request_id),
@@ -641,11 +777,13 @@ impl PromptEnhancer {
 
         Ok(EnhanceResponse {
             enhanced_prompt,
-            original_prompt: request.prompt,
+            original_prompt: response_original_prompt,
             success,
             error: if success { None } else { Some("未能从响应中提取增强结果".to_string()) },
             blob_count,
             history_count,
+            history_load_error,
+            history_fallback_used,
             project_root_path,
             blob_source_root,
             request_id: Some(request_id),

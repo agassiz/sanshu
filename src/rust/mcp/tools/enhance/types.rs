@@ -8,6 +8,10 @@ use std::sync::{Arc, atomic::AtomicBool};
 pub struct EnhanceRequest {
     /// 要增强的原始提示词
     pub prompt: String,
+    /// 原始用户输入（用于历史兜底与记录；可选）
+    /// 中文注释：前端的 prompt 可能包含“规则/上下文拼接”，这里保留更干净的原始输入
+    #[serde(default)]
+    pub original_prompt: Option<String>,
     /// 项目根路径（用于加载 blob 上下文）
     #[serde(default)]
     pub project_root_path: Option<String>,
@@ -50,6 +54,12 @@ pub struct EnhanceResponse {
     /// 使用的对话历史条数
     #[serde(default)]
     pub history_count: usize,
+    /// 历史加载失败原因（用于区分“历史为空”与“历史加载失败”）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub history_load_error: Option<String>,
+    /// 是否启用了“历史为空兜底”（即使 history_count 为 0，也会提供临时上下文）
+    #[serde(default)]
+    pub history_fallback_used: bool,
     /// 请求传入的项目根路径（可选）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_root_path: Option<String>,

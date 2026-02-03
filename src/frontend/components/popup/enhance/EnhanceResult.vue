@@ -12,6 +12,10 @@ interface Props {
   projectRootPath: string
   blobCount: number | null
   historyCount: number | null
+  // 后端历史加载失败原因（为空表示未失败/未返回）
+  historyLoadError?: string
+  // 后端是否启用了“历史为空兜底”
+  historyFallbackUsed?: boolean
   blobSourceRoot: string
 }
 
@@ -53,8 +57,17 @@ const blobCountText = computed(() => {
 })
 
 const historyCountText = computed(() => {
+  // 中文注释：优先展示“加载失败”，避免将失败误判为“历史为空”
+  if (props.historyLoadError) {
+    return `加载失败：${props.historyLoadError}`
+  }
   if (props.historyCount === null) {
     return '未返回'
+  }
+  if (props.historyCount === 0) {
+    return props.historyFallbackUsed
+      ? '历史为空（已使用当前输入作为临时上下文）'
+      : '历史为空'
   }
   return `已加载 ${props.historyCount} 条记录`
 })
@@ -63,16 +76,37 @@ const showSourceRoot = computed(() => {
   return !!props.blobSourceRoot
 })
 
-// 中文注释：统一路径格式，避免 Windows 反斜杠导致误判
-function normalizePath(value: string) {
-  return value.trim().replace(/\\/g, '/').toLowerCase()
+/**
+ * 中文注释：清理 Windows 长路径前缀（\\?\ 或 //?/），并统一分隔符
+ * - 仅影响显示与比对，不影响真实路径
+ */
+function normalizePathDisplay(value: string) {
+  let v = (value || '').trim()
+  // 处理 \\?\ 前缀（Windows 扩展路径语法）
+  if (v.startsWith('\\\\?\\'))
+    v = v.slice(4)
+  // 处理 //?/ 前缀（某些 canonicalize/序列化场景会出现）
+  if (v.startsWith('//?/'))
+    v = v.slice(4)
+  // 统一使用正斜杠
+  v = v.replace(/\\/g, '/')
+  // 去除末尾斜杠，避免误判
+  v = v.replace(/\/+$/, '')
+  return v
 }
+
+// 中文注释：用于路径比对（Windows 路径大小写不敏感）
+function normalizePathCompare(value: string) {
+  return normalizePathDisplay(value).toLowerCase()
+}
+
+const blobSourceRootDisplay = computed(() => normalizePathDisplay(props.blobSourceRoot))
 
 const sourceMismatch = computed(() => {
   if (!props.blobSourceRoot || !props.projectRootPath) {
     return false
   }
-  return normalizePath(props.blobSourceRoot) !== normalizePath(props.projectRootPath)
+  return normalizePathCompare(props.blobSourceRoot) !== normalizePathCompare(props.projectRootPath)
 })
 </script>
 
@@ -110,7 +144,7 @@ const sourceMismatch = computed(() => {
         <span class="text-slate-500 dark:text-slate-400">
           索引来源{{ sourceMismatch ? '（与项目路径不一致）' : '' }}：
         </span>
-        <span class="break-all">{{ blobSourceRoot }}</span>
+        <span class="break-all">{{ blobSourceRootDisplay }}</span>
       </div>
     </div>
 

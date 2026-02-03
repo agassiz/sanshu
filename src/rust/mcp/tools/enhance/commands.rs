@@ -44,6 +44,8 @@ fn cancel_request(request_id: &str) -> bool {
 pub async fn enhance_prompt_stream(
     app_handle: AppHandle,
     prompt: String,
+    // 中文注释：原始用户输入（可选，用于历史记录与兜底）
+    original_prompt: Option<String>,
     project_root_path: Option<String>,
     current_file_path: Option<String>,
     include_history: Option<bool>,
@@ -70,6 +72,7 @@ pub async fn enhance_prompt_stream(
 
     let request = EnhanceRequest {
         prompt: prompt.clone(),
+        original_prompt: original_prompt.clone(),
         project_root_path: project_root_path.clone(),
         current_file_path,
         include_history: include_history.unwrap_or(true),
@@ -96,8 +99,10 @@ pub async fn enhance_prompt_stream(
             if response.success {
                 if let Some(ref path) = project_root_path {
                     if let Ok(manager) = ChatHistoryManager::new(path) {
+                        // 中文注释：优先记录“原始用户输入”，避免把规则/上下文拼接写入历史
+                        let user_input = original_prompt.as_deref().unwrap_or(&prompt);
                         let _ = manager.add_entry(
-                            &prompt,
+                            user_input,
                             &response.enhanced_prompt,
                             "enhance"
                         );
@@ -114,6 +119,8 @@ pub async fn enhance_prompt_stream(
 #[tauri::command]
 pub async fn enhance_prompt(
     prompt: String,
+    // 中文注释：原始用户输入（可选，用于历史记录与兜底）
+    original_prompt: Option<String>,
     project_root_path: Option<String>,
     current_file_path: Option<String>,
     include_history: Option<bool>,
@@ -135,6 +142,7 @@ pub async fn enhance_prompt(
 
     let request = EnhanceRequest {
         prompt: prompt.clone(),
+        original_prompt,
         project_root_path: project_root_path.clone(),
         current_file_path,
         include_history: include_history.unwrap_or(true),
@@ -175,7 +183,8 @@ pub async fn get_chat_history(
     let manager = ChatHistoryManager::new(&project_root_path)
         .map_err(|e| format!("创建历史管理器失败: {}", e))?;
     
-    Ok(manager.get_recent_entries(count.unwrap_or(20)))
+    manager.get_recent_entries(count.unwrap_or(20))
+        .map_err(|e| format!("读取历史记录失败: {}", e))
 }
 
 /// 清空对话历史

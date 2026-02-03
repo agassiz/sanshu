@@ -80,6 +80,10 @@ tiny-skia = "0.11"
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
 
+[dev-dependencies]
+# 中文注释：用于单元测试中的临时目录（例如 memory/migration.rs）
+tempfile = "3.10"
+
 [features]
 default = []
 # 使用 tauri 的 custom-protocol，避免依赖 devUrl 加载前端资源

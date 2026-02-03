@@ -1,11 +1,11 @@
 <script setup lang="ts">
+import type { CustomPrompt } from '../../types/popup'
 // 修复重复的 script setup 声明，避免 SFC 解析错误
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useMediaQuery } from '@vueuse/core'
 import { useMessage } from 'naive-ui'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import type { CustomPrompt } from '../../types/popup'
 import { buildConditionalContext } from '../../utils/conditionalContext'
 import EnhanceConfigPanel from './enhance/EnhanceConfigPanel.vue'
 import EnhancePreview from './enhance/EnhancePreview.vue'
@@ -41,6 +41,10 @@ interface EnhanceResponse {
   error?: string | null
   blob_count?: number
   history_count?: number
+  // 后端历史加载失败原因（用于区分“空”与“失败”）
+  history_load_error?: string | null
+  // 后端是否启用了“历史为空兜底”
+  history_fallback_used?: boolean
   project_root_path?: string | null
   blob_source_root?: string | null
   request_id?: string | null
@@ -100,6 +104,9 @@ const historySelectionTouched = ref(false)
 // 后端诊断信息（项目路径与上下文数量）
 const blobCount = ref<number | null>(null)
 const historyCount = ref<number | null>(null)
+// 中文注释：后端历史诊断信息（用于区分“空/失败/兜底”）
+const enhanceHistoryError = ref('')
+const enhanceHistoryFallbackUsed = ref(false)
 const responseProjectRoot = ref('')
 const blobSourceRoot = ref('')
 
@@ -232,6 +239,8 @@ function resetEnhanceState() {
   activeRequestId.value = null
   blobCount.value = null
   historyCount.value = null
+  enhanceHistoryError.value = ''
+  enhanceHistoryFallbackUsed.value = false
   responseProjectRoot.value = ''
   blobSourceRoot.value = ''
 }
@@ -292,7 +301,8 @@ async function loadHistoryEntries() {
   }
   catch (error) {
     console.error('加载对话历史失败:', error)
-    historyError.value = '加载历史记录失败'
+    // 中文注释：保留具体错误信息，便于用户区分“空/失败”
+    historyError.value = `加载历史记录失败: ${String(error)}`
   }
   finally {
     historyLoading.value = false
@@ -416,6 +426,8 @@ async function startEnhance() {
     // 调用后端增强并记录诊断信息
     const response = await invoke('enhance_prompt_stream', {
       prompt: finalPrompt.value,
+      // 中文注释：原始用户输入（用于历史兜底与更干净的历史记录）
+      originalPrompt: corePrompt.value,
       projectRootPath: props.projectRootPath || null,
       currentFilePath: props.currentFilePath || null,
       includeHistory: config.value.includeHistory,
@@ -432,6 +444,8 @@ async function startEnhance() {
 
     blobCount.value = typeof response.blob_count === 'number' ? response.blob_count : null
     historyCount.value = typeof response.history_count === 'number' ? response.history_count : null
+    enhanceHistoryError.value = response.history_load_error || ''
+    enhanceHistoryFallbackUsed.value = !!response.history_fallback_used
     responseProjectRoot.value = response.project_root_path || props.projectRootPath || ''
     blobSourceRoot.value = response.blob_source_root || ''
 
@@ -611,6 +625,8 @@ onUnmounted(() => {
         :project-root-path="displayProjectRoot"
         :blob-count="blobCount"
         :history-count="historyCount"
+        :history-load-error="enhanceHistoryError"
+        :history-fallback-used="enhanceHistoryFallbackUsed"
         :blob-source-root="displayBlobSourceRoot"
       />
 

@@ -95,6 +95,8 @@ impl EnhanceTool {
 
         let enhance_request = EnhanceRequest {
             prompt: request.prompt.clone(),
+            // 中文注释：MCP 调用没有单独的“原始输入”字段，直接复用 prompt
+            original_prompt: Some(request.prompt.clone()),
             project_root_path: project_root_path.clone(),
             current_file_path: None,
             include_history,
