@@ -12,7 +12,9 @@ use rust_embed::RustEmbed;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::mcp::tools::memory::TextSimilarity;
 use crate::log_debug;
+use super::lexicon;
 use super::sanitize::{sanitize_path_segment, sanitize_slug};
 
 const MAX_RESULTS: usize = 3;
@@ -442,12 +444,161 @@ impl BM25 {
     }
 }
 
+// ============ Query Expansion & Suggest Tokenization ============
+
+/// 查询扩展最多追加的 token 数，避免过度扩展导致噪声/性能问题。
+const QUERY_EXPANSION_MAX_TOKENS: usize = 32;
+
+/// BM25 无结果时启用相似度回退：若 Top1 相似度低于该值，认为没有可信结果（避免胡乱返回）。
+const FUZZY_FALLBACK_MIN_TOP1: f64 = 0.35;
+
+/// 相似度回退时的最小入选分数（低于该值的候选直接忽略）。
+const FUZZY_FALLBACK_MIN_ITEM: f64 = 0.25;
+
+fn is_allowed_short_token(token: &str) -> bool {
+    matches!(token, "ui" | "ux" | "ai")
+}
+
+/// 提取 ASCII 连续单词，用于处理中英粘连（如 `UI美化` -> `ui`）。
+fn extract_ascii_words(text_lower: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut curr = String::new();
+
+    for ch in text_lower.chars() {
+        if ch.is_ascii_alphanumeric() {
+            curr.push(ch.to_ascii_lowercase());
+        } else if !curr.is_empty() {
+            out.push(std::mem::take(&mut curr));
+        }
+    }
+    if !curr.is_empty() {
+        out.push(curr);
+    }
+
+    out
+}
+
+/// `uiux_suggest` 专用分词：
+/// - 复用 `TOKEN_RE` 清理标点
+/// - 保留长度 > 2 token，同时允许 `ui/ux/ai` 这类 2 字母高频信号
+/// - 额外提取 ASCII 连续单词，兼容中英粘连输入（如 `UI美化`）
+fn tokenize_for_suggest(text: &str) -> Vec<String> {
+    let lower = text.to_lowercase();
+    let cleaned = TOKEN_RE.replace_all(&lower, " ");
+
+    let mut out: Vec<String> = cleaned
+        .split_whitespace()
+        .filter(|w| w.len() > 2 || is_allowed_short_token(w))
+        .map(|w| w.to_string())
+        .collect();
+
+    // 补充：处理中英粘连（如 `ui美化`）
+    for w in extract_ascii_words(&lower) {
+        if w.len() > 2 || is_allowed_short_token(&w) {
+            out.push(w);
+        }
+    }
+
+    out
+}
+
+/// 英文轻量词干化（非常保守），用于 query expansion。
+///
+/// 说明：只对 ASCII token 生效；避免对非英文 token 做不安全的字符串切片。
+fn stem_en_token(token: &str) -> Option<String> {
+    if token.len() <= 4 || !token.is_ascii() {
+        return None;
+    }
+
+    // 常见后缀（优先处理更长的后缀）
+    for suffix in ["ness", "ment", "tion", "sion", "able", "ible", "ingly", "edly", "ing", "ed", "ly", "ity"] {
+        if token.ends_with(suffix) && token.len() > suffix.len() + 2 {
+            return Some(token[..token.len() - suffix.len()].to_string());
+        }
+    }
+
+    // 复数（跳过 glass/class 这类以 ss 结尾的词）
+    if token.ends_with("es") && token.len() > 5 {
+        return Some(token[..token.len() - 2].to_string());
+    }
+    if token.ends_with('s') && token.len() > 5 && !token.ends_with("ss") {
+        return Some(token[..token.len() - 1].to_string());
+    }
+
+    None
+}
+
+/// 收集 Query Expansion 追加 token（去重、排序）。
+fn collect_query_expansion(query: &str) -> Vec<String> {
+    let mut set: HashSet<String> = HashSet::new();
+    let query_lower = query.to_lowercase();
+
+    // 1) ASCII 信号（支持中英粘连，如 `UI美化`）
+    for w in extract_ascii_words(&query_lower) {
+        match w.as_str() {
+            // `ui/ux` 在 BM25 tokenizer 中会被过滤（len==2），因此映射到更长的概念词
+            "ui" | "uiux" => {
+                set.insert("design".to_string());
+                set.insert("interface".to_string());
+            }
+            "ux" => {
+                set.insert("usability".to_string());
+                set.insert("accessibility".to_string());
+            }
+            _ => {}
+        }
+    }
+
+    // 2) 中文短语 -> 英文 token
+    for (zh, ens) in lexicon::ZH_TO_EN_EXPANSIONS {
+        if query.contains(zh) {
+            for &en in *ens {
+                set.insert(en.to_string());
+            }
+        }
+    }
+
+    // 3) 英文 token -> 同义/相关 token + 轻量词干
+    // 说明：BM25::tokenize 已做 lower + 清理标点，可直接用于等值匹配。
+    for token in BM25::tokenize(&query_lower) {
+        // 同义词扩展
+        for (key, syns) in lexicon::EN_SYNONYMS {
+            if token == *key {
+                for &syn in *syns {
+                    set.insert(syn.to_string());
+                }
+            }
+        }
+        // 词干化扩展（保守）
+        if let Some(stem) = stem_en_token(&token) {
+            set.insert(stem);
+        }
+    }
+
+    let mut out: Vec<String> = set.into_iter().collect();
+    out.sort();
+    if out.len() > QUERY_EXPANSION_MAX_TOKENS {
+        out.truncate(QUERY_EXPANSION_MAX_TOKENS);
+    }
+    out
+}
+
+/// 构造 BM25 用的扩展查询串：原 query + 追加 token。
+fn expand_query_for_bm25(query: &str) -> String {
+    let extra = collect_query_expansion(query);
+    if extra.is_empty() {
+        return query.to_string();
+    }
+    format!("{} {}", query, extra.join(" "))
+}
+
 struct DomainIndex {
     file: &'static str,
-    search_cols: &'static [&'static str],
     output_cols: &'static [&'static str],
     rows: Vec<HashMap<String, String>>,
     bm25: BM25,
+    /// 原始文档文本（由 `search_cols` 拼接），用于 BM25 fit 与相似度回退。
+    documents: Vec<String>,
 }
 
 impl DomainIndex {
@@ -470,15 +621,19 @@ impl DomainIndex {
 
         Ok(Self {
             file: config.file,
-            search_cols: config.search_cols,
             output_cols: config.output_cols,
             rows,
             bm25,
+            documents,
         })
     }
 
     fn search(&self, query: &str, max_results: usize) -> Vec<HashMap<String, String>> {
-        let ranked = self.bm25.score(query);
+        let max_results = max_results.max(1);
+
+        // 1) Query Expansion：先把中文/同义概念映射成额外英文 token，再喂给 BM25
+        let expanded_query = expand_query_for_bm25(query);
+        let ranked = self.bm25.score(&expanded_query);
         let mut results = Vec::new();
 
         for (idx, score) in ranked {
@@ -487,6 +642,48 @@ impl DomainIndex {
             }
             if score <= 0.0 {
                 continue;
+            }
+            if let Some(row) = self.rows.get(idx) {
+                let mut out = HashMap::new();
+                for col in self.output_cols {
+                    if let Some(value) = row.get(*col) {
+                        out.insert((*col).to_string(), value.clone());
+                    }
+                }
+                results.push(out);
+            }
+        }
+
+        // 2) 语义回退：BM25 没命中时，使用轻量文本相似度做兜底（数据规模百级，性能可控）
+        if !results.is_empty() {
+            return results;
+        }
+
+        let mut scored: Vec<(f64, usize)> = Vec::with_capacity(self.documents.len());
+        for (idx, doc) in self.documents.iter().enumerate() {
+            if doc.trim().is_empty() {
+                continue;
+            }
+            let sim = TextSimilarity::calculate_enhanced(&expanded_query, doc);
+            scored.push((sim, idx));
+        }
+
+        scored.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let best = scored.first().map(|(s, _)| *s).unwrap_or(0.0);
+        if best < FUZZY_FALLBACK_MIN_TOP1 {
+            return Vec::new();
+        }
+
+        for (sim, idx) in scored {
+            if results.len() >= max_results {
+                break;
+            }
+            if sim < FUZZY_FALLBACK_MIN_ITEM {
+                break; // 已按降序排序
             }
             if let Some(row) = self.rows.get(idx) {
                 let mut out = HashMap::new();
@@ -640,6 +837,26 @@ fn load_csv(path: &str) -> Result<Vec<HashMap<String, String>>, String> {
 
 fn detect_domain(query: &str) -> &'static str {
     let query_lower = query.to_lowercase();
+
+    // 中文/中英混合：先用轻量映射做域提示（命中则直接返回）
+    // 说明：这里不做复杂 NLP，只做可维护的短语命中。
+    let mut zh_scores: HashMap<&'static str, usize> = HashMap::new();
+    for (hint, domain) in lexicon::ZH_DOMAIN_HINTS {
+        let hit = if hint.is_ascii() {
+            query_lower.contains(&hint.to_lowercase())
+        } else {
+            query.contains(hint)
+        };
+        if hit {
+            *zh_scores.entry(*domain).or_insert(0) += 1;
+        }
+    }
+    if let Some((best, score)) = zh_scores.into_iter().max_by_key(|(_, s)| *s) {
+        if score > 0 {
+            return best;
+        }
+    }
+
     let mut best_domain = "style";
     let mut best_score = 0;
 
@@ -2155,10 +2372,24 @@ pub fn generate_design_system(
 
 pub fn suggest(text: &str) -> SuggestResult {
     let store = &*UIUX_STORE;
-    let tokens = BM25::tokenize(text);
     let mut matched: HashSet<String> = HashSet::new();
 
-    for token in tokens {
+    // 1) 基础分词（允许 ui/ux 等短信号 + 处理中英粘连）
+    for token in tokenize_for_suggest(text) {
+        if store.keyword_set.contains(&token) {
+            matched.insert(token);
+        }
+    }
+
+    // 2) 中文强触发词：直接作为命中关键词（用于可解释性与兜底触发）
+    for &kw in lexicon::ZH_UIUX_STRONG_TRIGGERS {
+        if text.contains(kw) {
+            matched.insert(kw.to_string());
+        }
+    }
+
+    // 3) Query Expansion：将中文/同义概念映射为英文 token，再尝试命中 keyword_set
+    for token in collect_query_expansion(text) {
         if store.keyword_set.contains(&token) {
             matched.insert(token);
         }
@@ -2201,16 +2432,27 @@ fn build_keyword_set() -> HashSet<String> {
         }
     }
 
+    // 栈/域名也走同一套清理规则，避免 `nuxt-ui` / `react-native` 这类 token 在 suggest 分词中无法命中
     for stack in STACK_CONFIGS.keys() {
-        set.insert(stack.to_string());
+        add_keywords_allow_short(stack, &mut set);
     }
 
     for domain in DOMAIN_CONFIGS.keys() {
-        set.insert(domain.to_string());
+        add_keywords_allow_short(domain, &mut set);
     }
 
-    for token in ["ui", "ux", "uiux", "front-end", "frontend", "landing", "dashboard", "design", "component"] {
-        set.insert(token.to_string());
+    for token in [
+        "ui",
+        "ux",
+        "uiux",
+        "front-end",
+        "frontend",
+        "landing",
+        "dashboard",
+        "design",
+        "component",
+    ] {
+        add_keywords_allow_short(token, &mut set);
     }
 
     set
@@ -2227,5 +2469,50 @@ fn add_keywords(text: &str, set: &mut HashSet<String>) {
             continue;
         }
         set.insert(token.to_string());
+    }
+}
+
+/// `build_keyword_set()` 用的“允许短 token”版本：保留长度 >= 2 的 token，支持 `ui/ux`。
+fn add_keywords_allow_short(text: &str, set: &mut HashSet<String>) {
+    let lower = text.to_lowercase();
+    let cleaned = TOKEN_RE.replace_all(&lower, " ");
+    for token in cleaned.split_whitespace() {
+        if token.len() < 2 {
+            continue;
+        }
+        if KEYWORD_STOPWORDS.contains(token) {
+            continue;
+        }
+        set.insert(token.to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tokenize_for_suggest_keeps_uiux_and_mixed_tokens() {
+        let t1 = tokenize_for_suggest("UI/UX");
+        assert!(t1.contains(&"ui".to_string()));
+        assert!(t1.contains(&"ux".to_string()));
+
+        // 中英粘连：应能提取出 ui
+        let t2 = tokenize_for_suggest("UI美化");
+        assert!(t2.contains(&"ui".to_string()));
+    }
+
+    #[test]
+    fn query_expansion_maps_zh_to_en_tokens() {
+        let extra = collect_query_expansion("科技感 登录");
+        assert!(extra.iter().any(|t| t == "futuristic"));
+        assert!(extra.iter().any(|t| t == "login"));
+    }
+
+    #[test]
+    fn suggest_triggers_on_common_zh_intent() {
+        let r = suggest("优雅的登录页面，帮我美化一下");
+        assert!(r.should_suggest);
+        assert!(r.matched_keywords.iter().any(|k| k == "登录" || k == "美化"));
     }
 }

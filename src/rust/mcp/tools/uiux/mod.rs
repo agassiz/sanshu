@@ -7,5 +7,6 @@ pub mod mcp;
 pub mod response;
 pub mod sanitize;
 pub mod types;
+mod lexicon;
 
 pub use mcp::UiuxTool;
