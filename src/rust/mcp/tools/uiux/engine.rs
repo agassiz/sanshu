@@ -450,10 +450,13 @@ impl BM25 {
 const QUERY_EXPANSION_MAX_TOKENS: usize = 32;
 
 /// BM25 无结果时启用相似度回退：若 Top1 相似度低于该值，认为没有可信结果（避免胡乱返回）。
-const FUZZY_FALLBACK_MIN_TOP1: f64 = 0.35;
+const FUZZY_FALLBACK_MIN_TOP1: f64 = 0.50;
 
-/// 相似度回退时的最小入选分数（低于该值的候选直接忽略）。
-const FUZZY_FALLBACK_MIN_ITEM: f64 = 0.25;
+/// 相似度回退的“相对阈值”：只保留接近 Top1 的候选，降低误召回。
+const FUZZY_FALLBACK_RELATIVE_RATIO: f64 = 0.75;
+
+/// 相似度回退的最小入选分数下限（配合相对阈值使用）。
+const FUZZY_FALLBACK_MIN_ITEM_FLOOR: f64 = 0.35;
 
 fn is_allowed_short_token(token: &str) -> bool {
     matches!(token, "ui" | "ux" | "ai")
@@ -558,6 +561,19 @@ fn collect_query_expansion(query: &str) -> Vec<String> {
         }
     }
 
+    // 2b) 对已插入的 token 再补一轮轻量同义扩展（例如 `glassmorphism` -> `liquid`）。
+    // 说明：避免把所有同义词都写进中文映射表，提升可维护性。
+    let snapshot: Vec<String> = set.iter().cloned().collect();
+    for token in snapshot {
+        for (key, syns) in lexicon::EN_SYNONYMS {
+            if token == *key {
+                for &syn in *syns {
+                    set.insert(syn.to_string());
+                }
+            }
+        }
+    }
+
     // 3) 英文 token -> 同义/相关 token + 轻量词干
     // 说明：BM25::tokenize 已做 lower + 清理标点，可直接用于等值匹配。
     for token in BM25::tokenize(&query_lower) {
@@ -592,23 +608,70 @@ fn expand_query_for_bm25(query: &str) -> String {
     format!("{} {}", query, extra.join(" "))
 }
 
+/// 构造 fuzzy 回退用的列集合：尽量选择“短且辨识度高”的字段，避免长描述拉低相似度。
+///
+/// 规则（KISS）：
+/// - 总是包含第 1 列（通常是名称/类别）
+/// - 包含所有包含 `keyword` 的列（如 `Keywords`、`Mood/Style Keywords`）
+/// - 额外包含第 2 列（通常是 Issue/Pattern/Type 等）作为补充
+fn build_fuzzy_cols(search_cols: &'static [&'static str]) -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = Vec::new();
+    let mut seen: HashSet<&'static str> = HashSet::new();
+
+    if let Some(&first) = search_cols.first() {
+        if seen.insert(first) {
+            out.push(first);
+        }
+    }
+
+    for &col in search_cols {
+        if col.to_lowercase().contains("keyword") {
+            if seen.insert(col) {
+                out.push(col);
+            }
+        }
+    }
+
+    if search_cols.len() >= 2 {
+        let second = search_cols[1];
+        if seen.insert(second) {
+            out.push(second);
+        }
+    }
+
+    out
+}
+
 struct DomainIndex {
     file: &'static str,
     output_cols: &'static [&'static str],
     rows: Vec<HashMap<String, String>>,
     bm25: BM25,
-    /// 原始文档文本（由 `search_cols` 拼接），用于 BM25 fit 与相似度回退。
-    documents: Vec<String>,
+    /// fuzzy 回退用的“短文档”，避免与长描述比对导致相似度过低（更适合 typo/近似匹配）。
+    fuzzy_documents: Vec<String>,
 }
 
 impl DomainIndex {
     fn new(config: &DomainConfig) -> Result<Self, String> {
         let rows = load_csv(config.file)?;
+
         let documents: Vec<String> = rows
             .iter()
             .map(|row| {
                 config
                     .search_cols
+                    .iter()
+                    .map(|col| row.get(*col).cloned().unwrap_or_default())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect();
+
+        let fuzzy_cols = build_fuzzy_cols(config.search_cols);
+        let fuzzy_documents: Vec<String> = rows
+            .iter()
+            .map(|row| {
+                fuzzy_cols
                     .iter()
                     .map(|col| row.get(*col).cloned().unwrap_or_default())
                     .collect::<Vec<_>>()
@@ -624,7 +687,7 @@ impl DomainIndex {
             output_cols: config.output_cols,
             rows,
             bm25,
-            documents,
+            fuzzy_documents,
         })
     }
 
@@ -659,13 +722,24 @@ impl DomainIndex {
             return results;
         }
 
-        let mut scored: Vec<(f64, usize)> = Vec::with_capacity(self.documents.len());
-        for (idx, doc) in self.documents.iter().enumerate() {
+        // 注意：fuzzy 回退优先用于“拼写错误/轻微变体”，因此使用短文档 + 原始 query 比对。
+        let mut scored: Vec<(f64, usize)> = Vec::with_capacity(self.fuzzy_documents.len());
+        for (idx, doc) in self.fuzzy_documents.iter().enumerate() {
             if doc.trim().is_empty() {
                 continue;
             }
-            let sim = TextSimilarity::calculate_enhanced(&expanded_query, doc);
-            scored.push((sim, idx));
+
+            // 关键优化：对短 query（如 style 名称 typo），用“query vs doc-token”的最大相似度，
+            // 避免长文档整体比对把相似度稀释掉。
+            let mut best_sim = TextSimilarity::calculate_enhanced(query, doc);
+            for token in BM25::tokenize(doc) {
+                let sim = TextSimilarity::calculate_enhanced(query, &token);
+                if sim > best_sim {
+                    best_sim = sim;
+                }
+            }
+
+            scored.push((best_sim, idx));
         }
 
         scored.sort_by(|a, b| {
@@ -677,12 +751,13 @@ impl DomainIndex {
         if best < FUZZY_FALLBACK_MIN_TOP1 {
             return Vec::new();
         }
+        let min_item = (best * FUZZY_FALLBACK_RELATIVE_RATIO).max(FUZZY_FALLBACK_MIN_ITEM_FLOOR);
 
         for (sim, idx) in scored {
             if results.len() >= max_results {
                 break;
             }
-            if sim < FUZZY_FALLBACK_MIN_ITEM {
+            if sim < min_item {
                 break; // 已按降序排序
             }
             if let Some(row) = self.rows.get(idx) {
@@ -814,6 +889,9 @@ fn load_csv(path: &str) -> Result<Vec<HashMap<String, String>>, String> {
     let bytes = read_embedded(path)?;
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(true)
+        // 中文注释：允许“列数不一致”的记录，避免单条坏数据导致整个领域无法加载。
+        // 缺失字段会自然落到 row.get() -> None -> unwrap_or_default() 的兜底逻辑。
+        .flexible(true)
         .from_reader(Cursor::new(bytes));
 
     let headers = reader
@@ -2525,7 +2603,11 @@ mod tests {
             output_cols: OUTPUT_COLS,
             rows,
             bm25,
-            documents,
+            fuzzy_documents: vec![
+                // 中文注释：fuzzy 测试用更短的文档文本，模拟真实回退行为
+                "Glassmorphism frosted glass blur".to_string(),
+                "Minimalism clean minimal elegant".to_string(),
+            ],
         }
     }
 
@@ -2570,6 +2652,12 @@ mod tests {
             results[0].get("Style Category").map(|s| s.as_str()),
             Some("Glassmorphism")
         );
+    }
+
+    #[test]
+    fn embedded_styles_csv_is_loadable() {
+        let rows = load_csv("styles.csv").expect("styles.csv 应能从 rust_embed 加载并解析");
+        assert!(!rows.is_empty());
     }
 
     #[test]

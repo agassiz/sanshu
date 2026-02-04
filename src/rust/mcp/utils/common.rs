@@ -138,7 +138,8 @@ pub fn generate_request_id() -> String {
 /// - `max_chars`: 最大字符数（不包括省略号）
 ///
 /// # 示例
-/// ```
+/// ```rust
+/// use sanshu::mcp_utils::safe_truncate;
 /// let chinese = "你好世界，这是一段很长的中文文本";
 /// let truncated = safe_truncate(chinese, 5);
 /// assert_eq!(truncated, "你好世界，...");

@@ -47,7 +47,9 @@ schemars = "0.8"
 rodio = "0.19"
 reqwest = { version = "0.11", features = [
   "stream",
-  "json"
+  "json",
+  # 中文注释：启用 SOCKS5 代理支持（ProxyType::Socks5 / socks5://...）。
+  "socks"
 ] }
 futures-util = "0.3"
 base64 = "0.21"
