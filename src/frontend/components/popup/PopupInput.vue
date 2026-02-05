@@ -50,6 +50,9 @@ const customPromptEnabled = ref(true)
 const showInsertDialog = ref(false)
 const pendingPromptContent = ref('')
 
+// 上下文追加整体开关（默认关闭）
+const contextAppendEnabled = ref(false)
+
 // 移除条件性prompt状态管理，直接使用prompt的current_state
 
 // 分离普通prompt和条件性prompt
@@ -61,12 +64,22 @@ const conditionalPrompts = computed(() =>
   customPrompts.value.filter(prompt => prompt.type === 'conditional'),
 )
 
+// 工具开关类 prompt（有 linked_mcp_tool 的）：独立于总开关，始终显示
+const toolSwitchPrompts = computed(() =>
+  conditionalPrompts.value.filter(prompt => !!prompt.linked_mcp_tool),
+)
+
+// 普通条件类 prompt（无 linked_mcp_tool）：受总开关控制
+const regularConditionalPrompts = computed(() =>
+  conditionalPrompts.value.filter(prompt => !prompt.linked_mcp_tool),
+)
+
 // MCP 工具状态管理
 const { mcpTools, loadMcpTools } = useMcpToolsReactive()
 
 // 检查关联的 MCP 工具是否启用
 function isMcpToolEnabled(toolId?: string): boolean {
-  if (!toolId) return true // 没有关联工具时默认可用
+  if (!toolId) return false // 没有关联工具时默认可用
   const tool = mcpTools.value.find(t => t.id === toolId)
   return tool?.enabled ?? false
 }
@@ -448,19 +461,37 @@ async function handleConditionalToggle(promptId: string, value: boolean) {
   }
 }
 
-// 生成条件性prompt的追加内容
+// 生成条件性prompt的追加内容（使用统一的 buildConditionalContext）
 function generateConditionalContent(): string {
-  // 复用统一的上下文拼接逻辑，保持增强与输入一致
-  const conditionalText = buildConditionalContext(conditionalPrompts.value)
-  return conditionalText ? `\n\n${conditionalText}` : ''
+  const content = buildConditionalContext(conditionalPrompts.value, {
+    contextAppendEnabled: contextAppendEnabled.value,
+    includeToolSwitches: true,
+  })
+  return content ? `\n\n${content}` : ''
 }
 
-// 获取条件性prompt的自适应描述
+// 获取条件性prompt的自适应描述（普通条件类）
 function getConditionalDescription(prompt: CustomPrompt): string {
+  // 如果整体开关关闭，不追加任何内容
+  if (!contextAppendEnabled.value) {
+    return ''
+  }
   const isEnabled = prompt.current_state ?? false
   const template = isEnabled ? prompt.template_true : prompt.template_false
 
   // 如果有对应状态的模板，显示模板内容，否则显示原始描述
+  if (template && template.trim()) {
+    return template.trim()
+  }
+
+  return prompt.description || ''
+}
+
+// 获取工具开关类 prompt 的描述（始终显示，不受总开关影响）
+function getToolSwitchDescription(prompt: CustomPrompt): string {
+  const isEnabled = prompt.current_state ?? false
+  const template = isEnabled ? prompt.template_true : prompt.template_false
+
   if (template && template.trim()) {
     return template.trim()
   }
@@ -806,15 +837,15 @@ defineExpose({
           </div>
         </div>
 
-        <!-- 上下文追加区域 -->
-        <div v-if="customPromptEnabled && conditionalPrompts.length > 0" class="space-y-2" data-guide="context-append">
+        <!-- 工具开关区域（始终显示，不受总开关影响） -->
+        <div v-if="customPromptEnabled && toolSwitchPrompts.length > 0" class="space-y-2" data-guide="tool-switches">
           <div class="text-xs text-on-surface-secondary flex items-center gap-2">
-            <div class="i-carbon-settings-adjust w-3 h-3 text-primary-500" />
-            <span>上下文追加:</span>
+            <div class="i-carbon-api w-3 h-3 text-primary-500" />
+            <span>工具开关:</span>
           </div>
           <div class="grid grid-cols-2 gap-2">
             <div
-              v-for="prompt in conditionalPrompts"
+              v-for="prompt in toolSwitchPrompts"
               :key="prompt.id"
               :class="[
                 'flex items-center justify-between p-2 bg-container-secondary rounded border border-gray-600 transition-colors text-xs',
@@ -825,8 +856,8 @@ defineExpose({
                 <div class="text-xs text-on-surface truncate font-medium" :title="prompt.condition_text || prompt.name">
                   {{ prompt.condition_text || prompt.name }}
                 </div>
-                <div v-if="getConditionalDescription(prompt)" class="text-xs text-primary-600 dark:text-primary-400 opacity-50 dark:opacity-60 mt-0.5 truncate leading-tight" :title="getConditionalDescription(prompt)">
-                  {{ getConditionalDescription(prompt) }}
+                <div v-if="getToolSwitchDescription(prompt)" class="text-xs text-primary-600 dark:text-primary-400 opacity-50 dark:opacity-60 mt-0.5 truncate leading-tight" :title="getToolSwitchDescription(prompt)">
+                  {{ getToolSwitchDescription(prompt) }}
                 </div>
               </div>
               <!-- 使用 n-tooltip 包裹开关，当 MCP 工具未启用时显示提示 -->
@@ -845,6 +876,54 @@ defineExpose({
           </div>
         </div>
 
+        <!-- 上下文追加区域（普通条件类 prompt） -->
+        <div v-if="customPromptEnabled && regularConditionalPrompts.length > 0" class="space-y-2" data-guide="context-append">
+          <div class="text-xs text-on-surface-secondary flex items-center gap-2 justify-between">
+            <div class="flex items-center gap-2">
+              <div class="i-carbon-settings-adjust w-3 h-3 text-primary-500" />
+              <span>上下文追加:</span>
+            </div>
+            <n-switch
+              v-model:value="contextAppendEnabled"
+              size="small"
+              @update:value="() => emitUpdate()"
+            >
+              <template #checked>
+                <span class="text-xs">开启</span>
+              </template>
+              <template #unchecked>
+                <span class="text-xs">关闭</span>
+              </template>
+            </n-switch>
+          </div>
+
+          <div v-if="contextAppendEnabled" class="grid grid-cols-2 gap-2">
+            <div
+              v-for="prompt in regularConditionalPrompts"
+              :key="prompt.id"
+              class="flex items-center justify-between p-2 bg-container-secondary rounded border border-gray-600 transition-colors text-xs hover:bg-container-tertiary"
+            >
+              <div class="flex-1 min-w-0 mr-2">
+                <div class="text-xs text-on-surface truncate font-medium" :title="prompt.condition_text || prompt.name">
+                  {{ prompt.condition_text || prompt.name }}
+                </div>
+                <div v-if="getConditionalDescription(prompt)" class="text-xs text-primary-600 dark:text-primary-400 opacity-50 dark:opacity-60 mt-0.5 truncate leading-tight" :title="getConditionalDescription(prompt)">
+                  {{ getConditionalDescription(prompt) }}
+                </div>
+              </div>
+              <n-switch
+                :value="prompt.current_state ?? false"
+                size="small"
+                @update:value="(value: boolean) => handleConditionalToggle(prompt.id, value)"
+              />
+            </div>
+          </div>
+
+          <div v-else class="text-xs text-on-surface-secondary opacity-60 italic">
+            已关闭，发送时不会追加任何上下文内容
+          </div>
+        </div>
+
         <!-- 图片提示区域 -->
         <div v-if="uploadedImages.length === 0" class="text-center">
           <div class="text-xs text-on-surface-secondary">
@@ -855,8 +934,8 @@ defineExpose({
         <!-- 提示词增强入口 -->
         <div class="flex items-center justify-between text-xs my-2">
           <div class="flex items-center gap-2 text-on-surface-secondary">
-            <div class="i-carbon-magic-wand w-3 h-3 text-primary-500" />
-            <span>{{ enhanceEnabled ? '可一键增强当前提示词' : '提示词增强未启用' }}</span>
+              <div class="i-carbon-magic-wand w-3 h-3 text-primary-500" />
+              <span>{{ enhanceEnabled ? '可一键增强当前提示词' : '提示词增强未启用' }}</span>
           </div>
           <n-button
             size="tiny"

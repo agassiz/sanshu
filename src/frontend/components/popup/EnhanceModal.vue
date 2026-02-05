@@ -117,7 +117,11 @@ let customRuleTimer: number | undefined
 // 计算属性
 const corePrompt = computed(() => props.originalPrompt?.trim() ?? '')
 const coreCharCount = computed(() => corePrompt.value.length)
-const contextText = computed(() => buildConditionalContext(conditionalPrompts.value))
+// 使用统一的 buildConditionalContext，EnhanceModal 默认包含所有条件性上下文
+const contextText = computed(() => buildConditionalContext(conditionalPrompts.value, {
+  contextAppendEnabled: true, // EnhanceModal 中总是启用
+  includeToolSwitches: true,
+}))
 
 const finalPrompt = computed(() => {
   if (!corePrompt.value) {
