@@ -127,7 +127,7 @@ async function getCurrentVersion(): Promise<string> {
   }
   catch (error) {
     console.error('获取当前版本失败:', error)
-    return '0.2.0'
+    return '0.4.5'
   }
 }
 
