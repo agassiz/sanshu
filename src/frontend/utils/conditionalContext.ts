@@ -27,7 +27,7 @@ const INTENT_LABELS: Record<string, string> = {
 }
 
 // 策略名称映射（用于 UI 展示）
-const POLICY_LABELS: Record<string, string> = {
+export const POLICY_LABELS: Record<string, string> = {
   auto: '自动',
   force: '强制追加',
   forbid: '禁止追加',
@@ -106,33 +106,85 @@ export function shouldShowPolicyIndicator(request?: McpRequest | null): boolean 
   return !!(request.uiux_intent || request.uiux_context_policy || request.uiux_reason)
 }
 
-// 复用条件性 prompt 的上下文拼接逻辑，保持与弹窗输入一致
-export function buildConditionalContext(prompts: CustomPrompt[], request?: McpRequest | null): string {
-  const conditionalTexts: string[] = []
+/**
+ * 上下文构建配置选项
+ */
+export interface BuildContextOptions {
+  /** MCP 请求对象，用于 UI/UX 策略判断 */
+  request?: McpRequest | null
+  /** 上下文追加总开关（默认 true，用于控制普通条件类 prompt） */
+  contextAppendEnabled?: boolean
+  /** 是否强制包含工具开关类（默认 true，工具开关类始终生效） */
+  includeToolSwitches?: boolean
+}
 
-  // 检查是否有显式 UI/UX 上下文信号
-  const hasExplicitSignal = !!(request?.uiux_intent || request?.uiux_context_policy || request?.uiux_reason)
+/**
+ * 构建条件性上下文内容
+ *
+ * 统一的上下文拼接逻辑，支持：
+ * 1. 工具开关类 prompt（有 linked_mcp_tool）：始终生效，不受总开关和策略控制
+ * 2. 普通条件类 prompt（无 linked_mcp_tool）：受总开关和 UI/UX 策略控制
+ *
+ * @param prompts 条件性 prompt 列表
+ * @param options 构建配置选项
+ * @returns 拼接后的上下文文本
+ */
+export function buildConditionalContext(
+  prompts: CustomPrompt[],
+  options?: BuildContextOptions | McpRequest | null,
+): string {
+  const parts: string[] = []
 
-  // 只有当显式传入了 UI/UX 信号时，才应用策略检查
-  // 否则（普通 zhi 调用），默认允许追加用户自定义的条件性上下文
-  // 修复：此前默认 policy='auto' + intent='none' 会拦截所有未传信号的场景，
-  // 导致用户勾选的上下文追加(条件性 Prompt)永远不会被拼接到最终响应中
-  if (hasExplicitSignal) {
-    const intent = request?.uiux_intent ?? 'none'
-    const policy = request?.uiux_context_policy ?? 'auto'
-    if (policy === 'forbid' || (policy === 'auto' && intent === 'none')) {
-      return ''
-    }
+  // 兼容旧的调用方式：buildConditionalContext(prompts, request)
+  let opts: BuildContextOptions = {}
+  if (options && typeof options === 'object' && ('uiux_intent' in options || 'uiux_context_policy' in options || 'id' in options)) {
+    // 旧格式：第二个参数是 McpRequest
+    opts = { request: options as McpRequest | null }
+  }
+  else if (options) {
+    opts = options as BuildContextOptions
   }
 
-  prompts.forEach((prompt) => {
-    const isEnabled = prompt.current_state ?? false
-    const template = isEnabled ? prompt.template_true : prompt.template_false
+  const { request, contextAppendEnabled = true, includeToolSwitches = true } = opts
 
-    if (template && template.trim()) {
-      conditionalTexts.push(template.trim())
-    }
-  })
+  // 分离工具开关类和普通条件类
+  const toolSwitchPrompts = prompts.filter(p => p.type === 'conditional' && !!p.linked_mcp_tool)
+  const regularPrompts = prompts.filter(p => p.type === 'conditional' && !p.linked_mcp_tool)
 
-  return conditionalTexts.join('\n')
+  // 1. 工具开关类：始终生效（不受总开关和策略控制）
+  if (includeToolSwitches) {
+    toolSwitchPrompts.forEach((prompt) => {
+      const isEnabled = prompt.current_state ?? false
+      const template = isEnabled ? prompt.template_true : prompt.template_false
+      if (template?.trim()) {
+        parts.push(template.trim())
+      }
+    })
+  }
+
+  // 2. 普通条件类：受总开关和 UI/UX 策略控制
+  const intent = request?.uiux_intent ?? 'none'
+  const policy = request?.uiux_context_policy ?? 'auto'
+  const hasExplicitSignal = !!(request?.uiux_intent || request?.uiux_context_policy || request?.uiux_reason)
+
+  // 判断是否应该包含普通条件类
+  // - 总开关必须开启
+  // - 策略不能是 'forbid'
+  // - 仅在显式传入 UI/UX 信号时应用 auto/intent 限制
+  // - 普通 zhi 调用即使传入了 request，只要没有显式 UI/UX 信号，也默认允许追加
+  const shouldIncludeRegular = contextAppendEnabled
+    && policy !== 'forbid'
+    && (policy === 'force' || !hasExplicitSignal || intent !== 'none')
+
+  if (shouldIncludeRegular) {
+    regularPrompts.forEach((prompt) => {
+      const isEnabled = prompt.current_state ?? false
+      const template = isEnabled ? prompt.template_true : prompt.template_false
+      if (template?.trim()) {
+        parts.push(template.trim())
+      }
+    })
+  }
+
+  return parts.join('\n')
 }
