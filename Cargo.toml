@@ -89,7 +89,7 @@ tempfile = "3.10"
 [features]
 default = []
 # 使用 tauri 的 custom-protocol，避免依赖 devUrl 加载前端资源
-custom-protocol = ["tauri/custom-protocol"]
+custom-protocol = [ "tauri/custom-protocol" ]
 
 # 发布版本优化配置
 [profile.release]
