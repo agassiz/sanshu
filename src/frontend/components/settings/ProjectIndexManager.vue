@@ -42,13 +42,14 @@ const directoryExistsCache = ref<Record<string, boolean>>({})
 
 // 搜索和筛选状态
 const searchQuery = ref('')
-const statusFilter = ref<IndexStatus | 'all'>('all')
+const statusFilter = ref<IndexStatus | 'all' | 'stale'>('all')
 const sortBy = ref<'status' | 'time' | 'name'>('status')
 
 // 状态筛选选项
 const statusOptions = [
   { label: '全部状态', value: 'all' },
   { label: '索引中', value: 'indexing' },
+  { label: '待重建', value: 'stale' },
   { label: '已完成', value: 'synced' },
   { label: '失败', value: 'failed' },
   { label: '未索引', value: 'idle' },
@@ -76,6 +77,8 @@ const selectedStatusSummary = computed(() => {
   const status = selectedProjectStatus.value
   if (!status)
     return '未索引'
+  if (status.is_stale && status.status !== 'indexing')
+    return '配置已变更'
   switch (status.status) {
     case 'idle':
       return '空闲'
@@ -92,7 +95,11 @@ const selectedStatusSummary = computed(() => {
 
 // 选中项目的状态图标
 const selectedStatusIcon = computed(() => {
-  const status = selectedProjectStatus.value?.status
+  const selected = selectedProjectStatus.value
+  if (selected?.is_stale && selected.status !== 'indexing')
+    return 'i-carbon-warning-alt text-amber-500'
+
+  const status = selected?.status
   switch (status) {
     case 'idle':
       return 'i-carbon-circle-dash text-gray-400'
@@ -129,15 +136,20 @@ const projectList = computed(() => {
 
   // 状态筛选
   if (statusFilter.value !== 'all') {
-    list = list.filter(p => p.status === statusFilter.value)
+    list = list.filter((p) => {
+      if (statusFilter.value === 'stale')
+        return !!p.is_stale && p.status !== 'indexing'
+      return p.status === statusFilter.value
+    })
   }
 
   // 排序
-  const statusOrder = { indexing: 0, synced: 1, failed: 2, idle: 3 }
+  const statusOrder = { indexing: 0, stale: 1, synced: 2, failed: 3, idle: 4 }
   list.sort((a, b) => {
     switch (sortBy.value) {
       case 'status':
-        return statusOrder[a.status] - statusOrder[b.status]
+        return statusOrder[a.is_stale && a.status !== 'indexing' ? 'stale' : a.status]
+          - statusOrder[b.is_stale && b.status !== 'indexing' ? 'stale' : b.status]
       case 'time': {
         const timeA = a.last_success_time ? new Date(a.last_success_time).getTime() : 0
         const timeB = b.last_success_time ? new Date(b.last_success_time).getTime() : 0
@@ -162,7 +174,8 @@ const stats = computed(() => {
   return {
     total: projects.length,
     indexing: projects.filter(p => p.status === 'indexing').length,
-    synced: projects.filter(p => p.status === 'synced').length,
+    stale: projects.filter(p => p.is_stale && p.status !== 'indexing').length,
+    synced: projects.filter(p => p.status === 'synced' && !p.is_stale).length,
     failed: projects.filter(p => p.status === 'failed').length,
   }
 })
@@ -415,6 +428,10 @@ function getDirectoryExists(projectRoot: string): boolean {
         <div v-if="stats.indexing > 0" class="stat-chip text-blue-500">
           <div class="i-carbon-in-progress animate-spin" />
           <span>{{ stats.indexing }} 索引中</span>
+        </div>
+        <div v-if="stats.stale > 0" class="stat-chip text-amber-500">
+          <div class="i-carbon-warning-alt" />
+          <span>{{ stats.stale }} 待重建</span>
         </div>
         <div v-if="stats.synced > 0" class="stat-chip text-green-500">
           <div class="i-carbon-checkmark-filled" />

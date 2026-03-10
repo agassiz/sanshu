@@ -24,8 +24,25 @@ const props = withDefaults(defineProps<Props>(), {
 })
 const emit = defineEmits<Emits>()
 
+const isStale = computed(() => !!props.project.is_stale && props.project.status !== 'indexing')
+const staleNotice = computed(() => {
+  if (!isStale.value)
+    return ''
+  return props.project.stale_reason || '检测到 ACE 配置已变更，等待重新索引'
+})
+
 // 状态配置映射
 const statusConfig = computed(() => {
+  if (isStale.value) {
+    return {
+      text: '待重建',
+      type: 'warning' as const,
+      icon: 'i-carbon-warning-alt',
+      glowColor: 'rgba(245, 158, 11, 0.35)',
+      borderColor: 'border-amber-500/40',
+    }
+  }
+
   const configs = {
     idle: {
       text: '未索引',
@@ -180,6 +197,11 @@ function formatAbsoluteTime(timeStr: string | null): string {
           </template>
           {{ statusConfig.text }}
         </n-tag>
+      </div>
+
+      <div v-if="staleNotice" class="stale-section">
+        <div class="i-carbon-warning-alt stale-section__icon" />
+        <span>{{ staleNotice }}</span>
       </div>
 
       <!-- 进度条（仅索引中时显示） -->
@@ -436,6 +458,30 @@ function formatAbsoluteTime(timeStr: string | null): string {
   align-items: center;
   gap: 4px;
   opacity: 0.5;
+}
+
+.stale-section {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.24);
+}
+
+.stale-section__icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+:root.dark .stale-section {
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.18);
+  border-color: rgba(245, 158, 11, 0.3);
 }
 
 /* 操作按钮区域 */

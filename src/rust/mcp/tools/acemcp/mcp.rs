@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
@@ -35,8 +35,16 @@ use crate::log_important;
 /// Acemcp工具实现
 pub struct AcemcpTool;
 
+/// 记录当前进程内已启动的后台索引任务，避免首次并发搜索时重复触发。
+static AUTO_INDEX_INFLIGHT: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn auto_index_inflight() -> &'static Mutex<HashSet<String>> {
+    AUTO_INDEX_INFLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
 impl AcemcpTool {
-    /// 执行代码库搜索（仅搜索，不触发索引）
+    /// 执行代码库搜索
+    /// 当检测到索引缺失或失效时，会在后台自动启动索引/重建任务
     pub async fn search_context(request: AcemcpRequest) -> Result<CallToolResult, McpError> {
         log_important!(info,
             "Acemcp搜索请求（仅搜索模式）: project_root_path={}, query={}",
@@ -78,8 +86,6 @@ impl AcemcpTool {
                 // 启动后台索引
                 if let Err(e) = ensure_initial_index_background(&acemcp_config, &request.project_root_path).await {
                     log_debug!("启动后台索引失败（不影响搜索）: {}", e);
-                } else {
-                    hint_message = "\n\n💡 提示：当前项目索引尚未完全初始化，已在后台启动索引，稍后搜索结果会更完整。".to_string();
                 }
             }
             InitialIndexState::Indexing => {
@@ -99,7 +105,7 @@ impl AcemcpTool {
             }
         }
 
-        // 3. 执行搜索（不触发索引）
+        // 3. 执行搜索或返回索引中提示
         let search_result = match search_only(&acemcp_config, &request.project_root_path, &request.query).await {
             Ok(text) => text,
             Err(e) => {
@@ -253,7 +259,11 @@ impl AcemcpTool {
 
     /// 获取所有项目的索引状态（供 Tauri 命令调用）
     pub fn get_all_index_status() -> ProjectsIndexStatus {
-        load_projects_status()
+        let mut all_status = load_projects_status();
+        for status in all_status.projects.values_mut() {
+            enrich_project_scope_state(status);
+        }
+        all_status
     }
 
     /// 获取项目内所有可索引文件的索引状态（供 Tauri 命令调用）
@@ -281,13 +291,20 @@ impl AcemcpTool {
                 .to_string_lossy()
         );
 
-        let existing_blob_names: std::collections::HashSet<String> = projects
+        let mut existing_blob_names: std::collections::HashSet<String> = projects
             .0
             .get(&normalized_root)
             .cloned()
             .unwrap_or_default()
             .into_iter()
             .collect();
+
+        let project_status = get_project_status(&project_root_path);
+        let current_scope_hash = build_index_scope_hash(&acemcp_config);
+        if is_index_scope_stale(&project_status, current_scope_hash.as_deref(), !existing_blob_names.is_empty()) {
+            // 中文注释：配置变更后，旧 blob 属于其他索引空间，这里按“未索引”展示更符合真实状态。
+            existing_blob_names.clear();
+        }
 
         let files = collect_file_statuses(
             &project_root_path,
@@ -497,6 +514,127 @@ pub fn get_initial_index_state(project_root: &str) -> InitialIndexState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackgroundIndexLaunchState {
+    Started,
+    AlreadyRunning,
+    Skipped,
+}
+
+fn build_index_scope_hash_from_parts(base_url: Option<&str>, token: Option<&str>) -> Option<String> {
+    let normalized_base_url = normalize_base_url(base_url?);
+    let mut ctx = ShaContext::new(&SHA256);
+    ctx.update(normalized_base_url.as_bytes());
+    ctx.update(b"\n");
+    ctx.update(token?.trim().as_bytes());
+    Some(hex::encode(ctx.finish().as_ref()))
+}
+
+/// 计算当前 ACE 索引空间签名，用于判断本地索引是否仍然绑定到当前 base_url/token。
+pub(crate) fn build_index_scope_hash(config: &AcemcpConfig) -> Option<String> {
+    build_index_scope_hash_from_parts(config.base_url.as_deref(), config.token.as_deref())
+}
+
+fn require_index_scope_hash(config: &AcemcpConfig) -> anyhow::Result<String> {
+    build_index_scope_hash(config)
+        .ok_or_else(|| anyhow::anyhow!("未配置完整的 ACE 索引空间身份"))
+}
+
+fn is_index_scope_stale(status: &ProjectIndexStatus, current_scope_hash: Option<&str>, has_local_blobs: bool) -> bool {
+    match current_scope_hash {
+        Some(current_hash) => match status.index_scope_hash.as_deref() {
+            Some(saved_hash) => saved_hash != current_hash,
+            None => has_local_blobs,
+        },
+        None => false,
+    }
+}
+
+fn enrich_project_scope_state(status: &mut ProjectIndexStatus) {
+    let current_scope_hash = crate::config::load_standalone_config()
+        .ok()
+        .and_then(|config| {
+            build_index_scope_hash_from_parts(
+                config.mcp_config.acemcp_base_url.as_deref(),
+                config.mcp_config.acemcp_token.as_deref(),
+            )
+        });
+    let has_local_blobs = if status.project_root.is_empty() {
+        false
+    } else {
+        has_local_blob_names(&status.project_root)
+    };
+    let stale = is_index_scope_stale(status, current_scope_hash.as_deref(), has_local_blobs);
+
+    status.is_stale = stale;
+    status.stale_reason = if stale {
+        Some("检测到 ACE 配置已变更，旧索引已失效，等待重新索引".to_string())
+    } else {
+        None
+    };
+}
+
+/// 在真正调度异步任务前先做进程内去重，并把项目状态切到 indexing，缩小重复触发窗口。
+async fn start_background_index(
+    config: &AcemcpConfig,
+    project_root: &str,
+    force: bool,
+) -> anyhow::Result<BackgroundIndexLaunchState> {
+    let initial_state = get_initial_index_state(project_root);
+    if !force {
+        match initial_state {
+            InitialIndexState::Synced => return Ok(BackgroundIndexLaunchState::Skipped),
+            InitialIndexState::Indexing => return Ok(BackgroundIndexLaunchState::AlreadyRunning),
+            InitialIndexState::Missing | InitialIndexState::Idle | InitialIndexState::Failed => {}
+        }
+    } else if initial_state == InitialIndexState::Indexing {
+        return Ok(BackgroundIndexLaunchState::AlreadyRunning);
+    }
+
+    let normalized_root = normalize_project_path(
+        &PathBuf::from(project_root)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(project_root))
+            .to_string_lossy(),
+    );
+
+    {
+        let mut inflight = auto_index_inflight().lock().unwrap();
+        if !inflight.insert(normalized_root.clone()) {
+            return Ok(BackgroundIndexLaunchState::AlreadyRunning);
+        }
+    }
+
+    let _ = update_project_status(project_root, |status| {
+        status.status = IndexStatus::Indexing;
+        status.progress = 0;
+    });
+
+    let config_clone = config.clone();
+    let project_root_clone = project_root.to_string();
+    tokio::spawn(async move {
+        log_important!(info, "后台索引任务启动: project_root={}", project_root_clone);
+        if let Err(e) = update_index(&config_clone, &project_root_clone).await {
+            log_important!(info, "后台索引失败: project_root={}, error={}", project_root_clone, e);
+            let error_message = e.to_string();
+            let _ = update_project_status(&project_root_clone, |status| {
+                if status.status == IndexStatus::Indexing {
+                    status.status = IndexStatus::Failed;
+                    status.last_error = Some(error_message.clone());
+                    status.last_failure_time = Some(chrono::Utc::now());
+                }
+            });
+        } else {
+            log_important!(info, "后台索引成功: project_root={}", project_root_clone);
+        }
+
+        let mut inflight = auto_index_inflight().lock().unwrap();
+        inflight.remove(&normalized_root);
+    });
+
+    Ok(BackgroundIndexLaunchState::Started)
+}
+
 /// 确保后台索引已启动（非阻塞）
 /// 仅在项目未初始化或索引失败时启动后台索引任务
 pub async fn ensure_initial_index_background(config: &AcemcpConfig, project_root: &str) -> anyhow::Result<()> {
@@ -504,19 +642,7 @@ pub async fn ensure_initial_index_background(config: &AcemcpConfig, project_root
 
     match state {
         InitialIndexState::Missing | InitialIndexState::Idle | InitialIndexState::Failed => {
-            // 在后台启动索引任务
-            let config_clone = config.clone();
-            let project_root_clone = project_root.to_string();
-
-            tokio::spawn(async move {
-                log_important!(info, "后台索引任务启动: project_root={}", project_root_clone);
-                if let Err(e) = update_index(&config_clone, &project_root_clone).await {
-                    log_important!(info, "后台索引失败: project_root={}, error={}", project_root_clone, e);
-                } else {
-                    log_important!(info, "后台索引成功: project_root={}", project_root_clone);
-                }
-            });
-
+            let _ = start_background_index(config, project_root, false).await?;
             Ok(())
         }
         InitialIndexState::Synced | InitialIndexState::Indexing => {
@@ -544,6 +670,29 @@ fn normalize_base_url(input: &str) -> String {
     }
     while url.ends_with('/') { url.pop(); }
     url
+}
+
+fn has_local_blob_names(project_root: &str) -> bool {
+    let projects_path = home_projects_file();
+    let projects: ProjectsFile = if projects_path.exists() {
+        let data = fs::read_to_string(&projects_path).unwrap_or_default();
+        serde_json::from_str(&data).unwrap_or_default()
+    } else {
+        ProjectsFile::default()
+    };
+
+    let normalized_root = normalize_project_path(
+        &PathBuf::from(project_root)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(project_root))
+            .to_string_lossy(),
+    );
+
+    projects
+        .0
+        .get(&normalized_root)
+        .map(|blob_names| !blob_names.is_empty())
+        .unwrap_or(false)
 }
 
 /// 规范化项目路径，去除 Windows 扩展路径前缀并统一使用正斜杠
@@ -697,11 +846,13 @@ fn get_project_status(project_root: &str) -> ProjectIndexStatus {
             .to_string_lossy()
     );
 
-    all_status.projects.get(&normalized_root).cloned().unwrap_or_else(|| {
+    let mut status = all_status.projects.get(&normalized_root).cloned().unwrap_or_else(|| {
         let mut status = ProjectIndexStatus::default();
         status.project_root = normalized_root;
         status
-    })
+    });
+    enrich_project_scope_state(&mut status);
+    status
 }
 
 /// 读取文件内容，支持多种编码检测
@@ -1054,6 +1205,7 @@ pub(crate) async fn update_index(config: &AcemcpConfig, project_root_path: &str)
     let has_host = base_url.trim().len() > "https://".len();
     if !has_scheme || !has_host { anyhow::bail!("无效的 base_url，请填写完整的 http(s)://host[:port] 格式"); }
     let token = config.token.clone().ok_or_else(|| anyhow::anyhow!("未配置 token"))?;
+    let current_scope_hash = require_index_scope_hash(config)?;
     let batch_size = config.batch_size.unwrap_or(10) as usize;
     let max_lines = config.max_lines_per_blob.unwrap_or(800) as usize;
     let text_exts = config.text_extensions.clone().unwrap_or_default();
@@ -1114,7 +1266,13 @@ pub(crate) async fn update_index(config: &AcemcpConfig, project_root_path: &str)
             .unwrap_or_else(|_| PathBuf::from(project_root_path))
             .to_string_lossy()
     );
-    let existing_blob_names: std::collections::HashSet<String> = projects.0.get(&normalized_root).cloned().unwrap_or_default().into_iter().collect();
+    let mut existing_blob_names: std::collections::HashSet<String> = projects.0.get(&normalized_root).cloned().unwrap_or_default().into_iter().collect();
+    let project_status = get_project_status(project_root_path);
+    let scope_changed = is_index_scope_stale(&project_status, Some(current_scope_hash.as_str()), !existing_blob_names.is_empty());
+    if scope_changed {
+        log_important!(info, "检测到 ACE 索引空间已变更，将按全量重建处理: project_root={}", normalized_root);
+        existing_blob_names.clear();
+    }
 
     // 计算所有 blob 的哈希值，建立哈希到 blob 的映射
     let mut blob_hash_map: std::collections::HashMap<String, BlobItem> = std::collections::HashMap::new();
@@ -1321,6 +1479,9 @@ pub(crate) async fn update_index(config: &AcemcpConfig, project_root_path: &str)
         status.pending_files = 0;
         status.last_success_time = Some(chrono::Utc::now());
         status.last_error = None;
+        status.index_scope_hash = Some(current_scope_hash.clone());
+        status.is_stale = false;
+        status.stale_reason = None;
         // 仅在有新增文件时更新最近索引列表
         if !recent_files.is_empty() {
             status.recent_indexed_files = recent_files;
@@ -1375,11 +1536,12 @@ fn write_index_memory_to_ji(project_root_path: &str, config: &AcemcpConfig) {
     }
 }
 
-/// 只执行搜索，不触发索引
-/// 使用已有的索引数据进行搜索
+/// 执行搜索
+/// 若检测到索引缺失或 ACE 配置已变更，则改为返回后台索引提示
 async fn search_only(config: &AcemcpConfig, project_root_path: &str, query: &str) -> anyhow::Result<String> {
     let base_url = config.base_url.clone().ok_or_else(|| anyhow::anyhow!("未配置 base_url"))?;
     let token = config.token.clone().ok_or_else(|| anyhow::anyhow!("未配置 token"))?;
+    let current_scope_hash = require_index_scope_hash(config)?;
 
     // 从 projects.json 读取已有的 blob 名称
     let projects_path = home_projects_file();
@@ -1399,9 +1561,27 @@ async fn search_only(config: &AcemcpConfig, project_root_path: &str, query: &str
     );
 
     let blob_names = projects.0.get(&normalized_root).cloned().unwrap_or_default();
+    let project_status = get_project_status(project_root_path);
+    let scope_changed = is_index_scope_stale(&project_status, Some(current_scope_hash.as_str()), !blob_names.is_empty());
+
+    if scope_changed {
+        let launch_state = start_background_index(config, project_root_path, true).await?;
+        let message = match launch_state {
+            BackgroundIndexLaunchState::Started => "检测到 API 配置已变更，当前项目索引已在后台重建，请稍后重试。",
+            BackgroundIndexLaunchState::AlreadyRunning => "检测到 API 配置已变更，当前项目索引正在后台重建，请稍后重试。",
+            BackgroundIndexLaunchState::Skipped => "检测到 API 配置已变更，请稍后重试。",
+        };
+        return Ok(message.to_string());
+    }
 
     if blob_names.is_empty() {
-        anyhow::bail!("项目尚未索引或索引为空，请先执行索引操作");
+        let launch_state = start_background_index(config, project_root_path, true).await?;
+        let message = match launch_state {
+            BackgroundIndexLaunchState::Started => "当前项目尚未建立索引，已在后台启动索引，请稍后重试。",
+            BackgroundIndexLaunchState::AlreadyRunning => "当前项目正在后台索引中，请稍后重试。",
+            BackgroundIndexLaunchState::Skipped => "当前项目索引尚未就绪，请稍后重试。",
+        };
+        return Ok(message.to_string());
     }
 
     // 发起检索

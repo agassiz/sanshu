@@ -1738,7 +1738,7 @@ pub async fn test_acemcp_proxy_speed(
     let search_url = format!("{}/agents/codebase-retrieval", base_url);
     
     // 从 projects.json 加载测试项目的 blob_names（与 mcp.rs::search_only 保持一致）
-    let blob_names: Vec<String> = {
+    let mut blob_names: Vec<String> = {
         use std::path::PathBuf;
         
         let projects_path = super::mcp::home_projects_file();
@@ -1757,6 +1757,22 @@ pub async fn test_acemcp_proxy_speed(
         
         projects.0.get(&normalized_root).cloned().unwrap_or_default()
     };
+
+    let current_scope_hash = super::mcp::build_index_scope_hash(&super::AcemcpTool::get_acemcp_config().await
+        .map_err(|e| format!("获取 acemcp 配置失败: {}", e))?);
+    let project_status = super::AcemcpTool::get_index_status(project_root_path.clone());
+    let scope_changed = match current_scope_hash.as_deref() {
+        Some(current_hash) => match project_status.index_scope_hash.as_deref() {
+            Some(saved_hash) => saved_hash != current_hash,
+            None => !blob_names.is_empty(),
+        },
+        None => false,
+    };
+    if scope_changed {
+        // 中文注释：测速也必须遵循当前索引空间，避免对已失效的旧 blob 做误导性测试。
+        log::warn!("⚠️ [SpeedTest] 检测到 ACE 配置变更，已忽略旧索引 blob 列表");
+        blob_names.clear();
+    }
     
     log::info!("🔍 [SpeedTest] 加载项目 blob_names: 数量={}", blob_names.len());
     

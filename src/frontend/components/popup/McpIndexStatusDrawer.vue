@@ -51,6 +51,34 @@ const projectName = computed(() => {
   return parts[parts.length - 1] || displayPath.value
 })
 
+const isStaleProject = computed(() => {
+  return !!props.projectStatus?.is_stale && props.projectStatus?.status !== 'indexing'
+})
+
+const displayStatusSummary = computed(() => {
+  return isStaleProject.value ? '配置已变更' : props.statusSummary
+})
+
+const displayStatusIcon = computed(() => {
+  return isStaleProject.value ? 'i-carbon-warning-alt text-amber-500' : props.statusIcon
+})
+
+const displayStatusTagType = computed(() => {
+  if (isStaleProject.value)
+    return 'warning'
+  return props.projectStatus?.status === 'synced'
+    ? 'success'
+    : props.projectStatus?.status === 'failed'
+      ? 'error'
+      : 'info'
+})
+
+const staleMessage = computed(() => {
+  if (!isStaleProject.value)
+    return ''
+  return props.projectStatus?.stale_reason || '检测到 ACE 配置已变更，旧索引等待重新索引'
+})
+
 // 文件索引状态数据
 const filesStatus = ref<ProjectFilesStatus | null>(null)
 const loadingFiles = ref(false)
@@ -349,6 +377,9 @@ const nestedProjects = computed(() => nestedStatus.value?.nested_projects ?? [])
 
 // 获取子项目状态图标
 function getNestedStatusIcon(np: NestedProjectInfo): string {
+  if (np.index_status?.is_stale && np.index_status.status !== 'indexing')
+    return 'i-carbon-warning-alt text-amber-400'
+
   const status = np.index_status?.status
   switch (status) {
     case 'synced':
@@ -367,6 +398,8 @@ function getNestedStatusText(np: NestedProjectInfo): string {
   const status = np.index_status
   if (!status)
     return '未索引'
+  if (status.is_stale && status.status !== 'indexing')
+    return '待重建'
   return `${status.indexed_files}/${status.total_files}`
 }
 
@@ -459,13 +492,13 @@ function handleCopyPath() {
     <!-- 头部标题 -->
     <template #header>
       <div class="modal-header">
-        <div class="header-icon" :class="statusIcon" />
+        <div class="header-icon" :class="displayStatusIcon" />
         <span class="header-title">代码索引状态</span>
         <n-tag
           size="small"
-          :type="projectStatus?.status === 'synced' ? 'success' : projectStatus?.status === 'failed' ? 'error' : 'info'"
+          :type="displayStatusTagType"
         >
-          {{ statusSummary }}
+          {{ displayStatusSummary }}
         </n-tag>
       </div>
     </template>
@@ -542,6 +575,11 @@ function handleCopyPath() {
         <div v-if="projectStatus?.last_success_time" class="time-info">
           <div class="i-carbon-time" />
           <span>上次成功：{{ projectStatus.last_success_time }}</span>
+        </div>
+
+        <div v-if="staleMessage" class="stale-info">
+          <div class="i-carbon-warning-alt" />
+          <span>{{ staleMessage }}</span>
         </div>
 
         <!-- 错误信息 -->
@@ -900,6 +938,24 @@ function handleCopyPath() {
   color: #ef4444;
   background: rgba(239, 68, 68, 0.1);
   border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.stale-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.22);
+}
+
+:root.dark .stale-info {
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.18);
+  border-color: rgba(245, 158, 11, 0.28);
 }
 
 /* ==================== 右侧文件树面板 ==================== */

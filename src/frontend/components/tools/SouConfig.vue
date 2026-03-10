@@ -50,6 +50,10 @@ const config = ref({
 const loadingConfig = ref(false)
 const showProxyModal = ref(false)
 const logFilePath = ref('')
+const lastSavedConnection = ref({
+  base_url: '',
+  token: '',
+})
 const { open: openLogViewer } = useLogViewer()
 // 调试状态
 const debugProjectRoot = ref('')
@@ -162,6 +166,10 @@ const excludeOptions = ref([
 
 // --- 操作函数 ---
 
+function normalizeBaseUrl(value: string): string {
+  return (value || '').trim().replace(/\/+$/, '')
+}
+
 async function loadAcemcpConfig() {
   loadingConfig.value = true
   try {
@@ -184,6 +192,10 @@ async function loadAcemcpConfig() {
       proxy_password: res.proxy_password || '',
       // 嵌套项目索引配置
       index_nested_projects: res.index_nested_projects ?? true,
+    }
+    lastSavedConnection.value = {
+      base_url: normalizeBaseUrl(res.base_url || ''),
+      token: (res.token || '').trim(),
     }
 
     // 确保选项存在
@@ -255,6 +267,11 @@ async function saveConfig() {
       }
     }
 
+    const nextBaseUrl = normalizeBaseUrl(config.value.base_url)
+    const nextToken = (config.value.token || '').trim()
+    const connectionChanged = lastSavedConnection.value.base_url !== nextBaseUrl
+      || lastSavedConnection.value.token !== nextToken
+
     await invoke('save_acemcp_config', {
       args: {
         baseUrl: config.value.base_url,
@@ -275,7 +292,16 @@ async function saveConfig() {
         indexNestedProjects: config.value.index_nested_projects,
       },
     })
+    lastSavedConnection.value = {
+      base_url: nextBaseUrl,
+      token: nextToken,
+    }
     message.success('配置已保存')
+    if (connectionChanged) {
+      message.warning('检测到 ACE 配置变更，现有索引将在下次搜索时自动重建', {
+        duration: 5000,
+      })
+    }
   }
   catch (err) {
     message.error(`保存失败: ${err}`)

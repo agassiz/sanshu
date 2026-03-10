@@ -83,6 +83,16 @@ pub struct ProjectIndexStatus {
     pub last_failure_time: Option<DateTime<Utc>>,
     /// 最后错误信息
     pub last_error: Option<String>,
+    /// 当前项目最近一次成功索引所对应的索引空间签名
+    /// 用于检测 base_url/token 变更后旧索引是否失效
+    #[serde(default)]
+    pub index_scope_hash: Option<String>,
+    /// 当前索引是否与现有 ACE 配置不匹配
+    #[serde(default)]
+    pub is_stale: bool,
+    /// 索引失效原因说明（用于前端展示）
+    #[serde(default)]
+    pub stale_reason: Option<String>,
     /// 按目录聚合的统计信息（目录路径 -> (已索引, 待处理)）
     pub directory_stats: HashMap<String, (usize, usize)>,
     /// 最近增量索引的文件列表（最多保留 5 个，相对路径）
@@ -103,6 +113,9 @@ impl Default for ProjectIndexStatus {
             last_success_time: None,
             last_failure_time: None,
             last_error: None,
+            index_scope_hash: None,
+            is_stale: false,
+            stale_reason: None,
             directory_stats: HashMap::new(),
             recent_indexed_files: Vec::new(),
         }
