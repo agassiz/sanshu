@@ -110,11 +110,19 @@ export function shouldShowPolicyIndicator(request?: McpRequest | null): boolean 
 export function buildConditionalContext(prompts: CustomPrompt[], request?: McpRequest | null): string {
   const conditionalTexts: string[] = []
 
-  // 根据 UI/UX 上下文策略决定是否追加条件性上下文
-  const intent = request?.uiux_intent ?? 'none'
-  const policy = request?.uiux_context_policy ?? 'auto'
-  if (policy === 'forbid' || (policy === 'auto' && intent === 'none')) {
-    return ''
+  // 检查是否有显式 UI/UX 上下文信号
+  const hasExplicitSignal = !!(request?.uiux_intent || request?.uiux_context_policy || request?.uiux_reason)
+
+  // 只有当显式传入了 UI/UX 信号时，才应用策略检查
+  // 否则（普通 zhi 调用），默认允许追加用户自定义的条件性上下文
+  // 修复：此前默认 policy='auto' + intent='none' 会拦截所有未传信号的场景，
+  // 导致用户勾选的上下文追加(条件性 Prompt)永远不会被拼接到最终响应中
+  if (hasExplicitSignal) {
+    const intent = request?.uiux_intent ?? 'none'
+    const policy = request?.uiux_context_policy ?? 'auto'
+    if (policy === 'forbid' || (policy === 'auto' && intent === 'none')) {
+      return ''
+    }
   }
 
   prompts.forEach((prompt) => {
