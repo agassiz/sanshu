@@ -86,6 +86,10 @@ pub struct WindowConfig {
     pub free_width: f64,
     #[serde(default = "default_free_height")]
     pub free_height: f64,
+
+    // 分栏布局模式（左右分栏）
+    #[serde(default = "default_split_layout")]
+    pub split_layout: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -391,6 +395,7 @@ pub fn default_window_config() -> WindowConfig {
         fixed_height: window::DEFAULT_HEIGHT,
         free_width: window::DEFAULT_WIDTH,
         free_height: window::DEFAULT_HEIGHT,
+        split_layout: window::DEFAULT_SPLIT_LAYOUT,
     }
 }
 
@@ -471,6 +476,10 @@ pub fn default_free_width() -> f64 {
 
 pub fn default_free_height() -> f64 {
     window::DEFAULT_HEIGHT
+}
+
+pub fn default_split_layout() -> bool {
+    window::DEFAULT_SPLIT_LAYOUT
 }
 
 pub fn default_telegram_enabled() -> bool {

@@ -27,6 +27,9 @@ pub const DEFAULT_FIXED_MODE: bool = false;
 /// 默认自动调整大小状态
 pub const DEFAULT_AUTO_RESIZE: bool = true;
 
+/// 默认分栏布局模式（关闭，默认上下布局）
+pub const DEFAULT_SPLIT_LAYOUT: bool = false;
+
 // 窗口约束结构体
 #[derive(Debug, Clone)]
 pub struct WindowConstraints {

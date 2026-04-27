@@ -15,6 +15,7 @@ interface Props {
   windowWidth: number
   windowHeight: number
   fixedWindowSize: boolean
+  splitLayout: boolean
   activeTab?: string
   projectRootPath?: string
   autoOpenToolId?: string
@@ -30,6 +31,7 @@ interface Emits {
   stopAudio: []
   testAudioError: [error: any]
   updateWindowSize: [size: { width: number, height: number, fixed: boolean }]
+  updateSplitLayout: [enabled: boolean]
   configReloaded: []
   'update:activeTab': [tab: string]
   mcpToolAutoOpened: [requestId: number]
@@ -178,6 +180,7 @@ function testPopup() {
               :window-width="windowWidth"
               :window-height="windowHeight"
               :fixed-window-size="fixedWindowSize"
+              :split-layout="splitLayout"
               @theme-change="$emit('themeChange', $event)"
               @toggle-always-on-top="$emit('toggleAlwaysOnTop')"
               @toggle-audio-notification="$emit('toggleAudioNotification')"
@@ -186,6 +189,7 @@ function testPopup() {
               @stop-audio="$emit('stopAudio')"
               @test-audio-error="$emit('testAudioError', $event)"
               @update-window-size="$emit('updateWindowSize', $event)"
+              @update-split-layout="$emit('updateSplitLayout', $event)"
               @config-reloaded="handleConfigReloaded"
             />
           </n-tab-pane>

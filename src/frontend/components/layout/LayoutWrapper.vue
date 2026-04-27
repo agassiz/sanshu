@@ -8,6 +8,7 @@ interface AppConfig {
     width: number
     height: number
     fixed: boolean
+    splitLayout: boolean
   }
   audio: {
     enabled: boolean
@@ -36,6 +37,7 @@ interface Emits {
   stopAudio: []
   testAudioError: [error: any]
   updateWindowSize: [size: { width: number, height: number, fixed: boolean }]
+  updateSplitLayout: [enabled: boolean]
   configReloaded: []
   'update:activeTab': [tab: string]
   mcpToolAutoOpened: [requestId: number]
@@ -54,6 +56,7 @@ defineEmits<Emits>()
     :window-width="appConfig.window.width"
     :window-height="appConfig.window.height"
     :fixed-window-size="appConfig.window.fixed"
+    :split-layout="appConfig.window.splitLayout"
     :active-tab="activeTab"
     :project-root-path="projectRootPath || undefined"
     :auto-open-tool-id="autoOpenToolId || undefined"
@@ -66,6 +69,7 @@ defineEmits<Emits>()
     @stop-audio="$emit('stopAudio')"
     @test-audio-error="$emit('testAudioError', $event)"
     @update-window-size="$emit('updateWindowSize', $event)"
+    @update-split-layout="$emit('updateSplitLayout', $event)"
     @config-reloaded="$emit('configReloaded')"
     @update:active-tab="$emit('update:activeTab', $event)"
     @mcp-tool-auto-opened="$emit('mcpToolAutoOpened', $event)"

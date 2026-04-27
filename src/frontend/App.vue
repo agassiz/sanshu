@@ -60,7 +60,8 @@ onUnmounted(() => {
               @stop-audio="handlers.onStopAudio" 
               @test-audio-error="handlers.onTestAudioError"
               @update-window-size="handlers.onUpdateWindowSize"
-              @update-reply-config="handlers.onUpdateReplyConfig" 
+              @update-split-layout="handlers.onUpdateSplitLayout"
+              @update-reply-config="handlers.onUpdateReplyConfig"
               @message-ready="handlers.onMessageReady"
               @config-reloaded="handlers.onConfigReloaded"
             />

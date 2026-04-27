@@ -19,6 +19,7 @@ function createSettings() {
   const windowWidth = ref(600)
   const windowHeight = ref(900)
   const fixedWindowSize = ref(false)
+  const splitLayout = ref(false)
 
   // 继续回复设置
   const continueReplyEnabled = ref(true)
@@ -91,6 +92,7 @@ function createSettings() {
           windowWidth.value = settings.current_width || 600
           windowHeight.value = settings.current_height || 900
           fixedWindowSize.value = settings.fixed || false
+          splitLayout.value = settings.split_layout || false
         }
       }
       catch {
@@ -238,6 +240,47 @@ function createSettings() {
       console.error('更新窗口大小失败:', error)
       if (message) {
         message.error(`更新窗口大小失败: ${error}`)
+      }
+    }
+  }
+
+  // 分栏模式下底部操作栏不换行所需的最小窗口宽度
+  const SPLIT_LAYOUT_MIN_WIDTH = 1000
+
+  // 更新分栏布局模式
+  async function updateSplitLayout(enabled: boolean) {
+    try {
+      await invoke('set_window_settings', { windowSettings: { split_layout: enabled } })
+      splitLayout.value = enabled
+
+      // 开启分栏时，如果当前窗口宽度不足则自动调大
+      if (enabled) {
+        try {
+          const result = await invoke('get_current_window_size') as any
+          if (result && result.width < SPLIT_LAYOUT_MIN_WIDTH) {
+            await invoke('update_window_size', {
+              sizeUpdate: {
+                width: SPLIT_LAYOUT_MIN_WIDTH,
+                height: result.height,
+                fixed: fixedWindowSize.value,
+              },
+            })
+            windowWidth.value = SPLIT_LAYOUT_MIN_WIDTH
+          }
+        }
+        catch (e) {
+          console.warn('自动调整窗口宽度失败:', e)
+        }
+      }
+
+      if (message) {
+        message.success(enabled ? '已切换为左右分栏布局' : '已切换为上下布局')
+      }
+    }
+    catch (error) {
+      console.error('更新分栏布局失败:', error)
+      if (message) {
+        message.error(`更新布局失败: ${error}`)
       }
     }
   }
@@ -426,6 +469,7 @@ function createSettings() {
     windowWidth,
     windowHeight,
     fixedWindowSize,
+    splitLayout,
     windowConstraints,
     continueReplyEnabled,
     continuePrompt,
@@ -442,6 +486,7 @@ function createSettings() {
     testAudioSound,
     stopAudioSound,
     updateWindowSize,
+    updateSplitLayout,
     updateReplyConfig,
     loadWindowConfig,
     setupWindowResizeListener,

@@ -20,14 +20,19 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  splitLayout: {
+    type: Boolean,
+    default: false,
+  },
 })
 
-const emit = defineEmits(['toggleAlwaysOnTop', 'updateWindowSize'])
+const emit = defineEmits(['toggleAlwaysOnTop', 'updateWindowSize', 'updateSplitLayout'])
 
 // 窗口设置状态 - 完全依赖后端
 const localFixed = ref(props.fixedWindowSize)
 const localWidth = ref(props.windowWidth)
 const localHeight = ref(props.windowHeight)
+const localSplitLayout = ref(props.splitLayout)
 
 // 实时窗口大小
 const currentWidth = ref(0)
@@ -49,6 +54,10 @@ watch(() => props.windowHeight, (newHeight) => {
 watch(() => props.fixedWindowSize, (newFixed) => {
   localFixed.value = newFixed
   loadWindowSettingsForMode(newFixed)
+})
+
+watch(() => props.splitLayout, (newSplitLayout) => {
+  localSplitLayout.value = newSplitLayout
 })
 
 // 从后端加载指定模式的窗口设置
@@ -209,6 +218,12 @@ async function saveWindowSize() {
   setTimeout(() => {
     getCurrentWindowSize()
   }, windowConstraints.value.size_update_delay_ms)
+}
+
+// 切换分栏布局模式
+function toggleSplitLayout(enabled: boolean) {
+  localSplitLayout.value = enabled
+  emit('updateSplitLayout', enabled)
 }
 
 // 设置窗口大小变化监听器
@@ -412,6 +427,28 @@ onUnmounted(() => {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- 布局模式设置 -->
+    <div class="pt-4 border-t border-gray-200 dark:border-gray-700">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center">
+          <div class="w-1.5 h-1.5 bg-success rounded-full mr-3 flex-shrink-0" />
+          <div>
+            <div class="text-sm font-medium leading-relaxed">
+              左右分栏
+            </div>
+            <div class="text-xs opacity-60">
+              开启后弹窗内容区将左右分栏：左侧 AI 回复，右侧用户操作
+            </div>
+          </div>
+        </div>
+        <n-switch
+          :value="localSplitLayout"
+          size="small"
+          @update:value="toggleSplitLayout"
+        />
       </div>
     </div>
   </n-space>

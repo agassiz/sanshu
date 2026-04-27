@@ -23,6 +23,7 @@ interface Props {
   windowWidth: number
   windowHeight: number
   fixedWindowSize: boolean
+  splitLayout: boolean
 }
 
 defineProps<Props>()
@@ -98,12 +99,18 @@ interface Emits {
   stopAudio: []
   testAudioError: [error: any]
   updateWindowSize: [size: { width: number, height: number, fixed: boolean }]
+  updateSplitLayout: [enabled: boolean]
   configReloaded: []
 }
 
 // 处理窗口尺寸更新
 function handleWindowSizeUpdate(size: { width: number, height: number, fixed: boolean }) {
   emit('updateWindowSize', size)
+}
+
+// 处理分栏布局切换
+function handleSplitLayoutUpdate(enabled: boolean) {
+  emit('updateSplitLayout', enabled)
 }
 </script>
 
@@ -207,8 +214,10 @@ function handleWindowSizeUpdate(size: { width: number, height: number, fixed: bo
             :window-width="windowWidth"
             :window-height="windowHeight"
             :fixed-window-size="fixedWindowSize"
+            :split-layout="splitLayout"
             @toggle-always-on-top="$emit('toggleAlwaysOnTop')"
             @update-window-size="handleWindowSizeUpdate"
+            @update-split-layout="handleSplitLayoutUpdate"
           />
         </div>
       </n-collapse-item>

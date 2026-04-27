@@ -26,6 +26,7 @@ export function useAppManager() {
         width: settings.windowWidth.value,
         height: settings.windowHeight.value,
         fixed: settings.fixedWindowSize.value,
+        splitLayout: settings.splitLayout.value,
       },
       audio: {
         enabled: settings.audioNotificationEnabled.value,
@@ -54,6 +55,7 @@ export function useAppManager() {
       testAudio: settings.testAudioSound,
       stopAudio: settings.stopAudioSound,
       updateWindowSize: settings.updateWindowSize,
+      updateSplitLayout: settings.updateSplitLayout,
       updateReplyConfig: settings.updateReplyConfig,
       setMessageInstance: settings.setMessageInstance,
       reloadAllSettings: settings.reloadAllSettings,

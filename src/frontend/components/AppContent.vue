@@ -22,6 +22,7 @@ interface AppConfig {
     width: number
     height: number
     fixed: boolean
+    splitLayout: boolean
   }
   audio: {
     enabled: boolean
@@ -58,6 +59,7 @@ interface Emits {
   stopAudio: []
   testAudioError: [error: any]
   updateWindowSize: [size: { width: number, height: number, fixed: boolean }]
+  updateSplitLayout: [enabled: boolean]
   updateReplyConfig: [config: { enable_continue_reply?: boolean, continue_prompt?: string }]
   messageReady: [message: any]
   configReloaded: []
@@ -253,6 +255,7 @@ onUnmounted(() => {
           @stop-audio="$emit('stopAudio')"
           @test-audio-error="$emit('testAudioError', $event)"
           @update-window-size="$emit('updateWindowSize', $event)"
+          @update-split-layout="$emit('updateSplitLayout', $event)"
           @update:active-tab="activeTab = $event"
           @mcp-tool-auto-opened="handleMcpToolAutoOpened"
         />
@@ -380,6 +383,7 @@ onUnmounted(() => {
       @stop-audio="$emit('stopAudio')"
       @test-audio-error="$emit('testAudioError', $event)"
       @update-window-size="$emit('updateWindowSize', $event)"
+      @update-split-layout="$emit('updateSplitLayout', $event)"
       @config-reloaded="$emit('configReloaded')"
       @update:active-tab="activeTab = $event"
       @mcp-tool-auto-opened="handleMcpToolAutoOpened"

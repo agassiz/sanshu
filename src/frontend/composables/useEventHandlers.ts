@@ -18,6 +18,7 @@ export function useEventHandlers(actions: any) {
     onTestAudio: actions.settings.testAudio,
     onStopAudio: actions.settings.stopAudio,
     onUpdateWindowSize: actions.settings.updateWindowSize,
+    onUpdateSplitLayout: actions.settings.updateSplitLayout,
     onUpdateReplyConfig: actions.settings.updateReplyConfig,
     onMessageReady: actions.settings.setMessageInstance,
 

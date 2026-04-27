@@ -200,7 +200,8 @@ pub async fn get_window_settings(state: State<'_, AppState>) -> Result<serde_jso
         "fixed_width": config.ui_config.window_config.fixed_width,
         "fixed_height": config.ui_config.window_config.fixed_height,
         "free_width": config.ui_config.window_config.free_width,
-        "free_height": config.ui_config.window_config.free_height
+        "free_height": config.ui_config.window_config.free_height,
+        "split_layout": config.ui_config.window_config.split_layout
     });
 
     Ok(window_settings)
@@ -357,6 +358,11 @@ pub async fn set_window_settings(
                     .window_config
                     .update_current_size(width, height);
             }
+        }
+
+        // 更新分栏布局模式
+        if let Some(split_layout) = window_settings.get("split_layout").and_then(|v| v.as_bool()) {
+            config.ui_config.window_config.split_layout = split_layout;
         }
     }
 

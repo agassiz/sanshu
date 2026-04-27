@@ -20,6 +20,7 @@ interface AppConfig {
     width: number
     height: number
     fixed: boolean
+    splitLayout: boolean
   }
   audio: {
     enabled: boolean
@@ -618,7 +619,7 @@ function handleOpenIndexStatus() {
 </script>
 
 <template>
-  <div v-if="isVisible" class="flex flex-col flex-1">
+  <div v-if="isVisible" class="flex flex-col flex-1 min-h-0 overflow-hidden">
     <!-- ACE 索引状态面板（智能降级：根据 sou 启用状态和 ACE 配置显示不同内容） -->
     <ZhiIndexPanel
       :project-root="request?.project_root_path"
@@ -664,8 +665,9 @@ function handleOpenIndexStatus() {
       </n-tooltip>
     </div>
 
-    <!-- 内容区域 - 可滚动 -->
-    <div class="flex-1 overflow-y-auto scrollbar-thin">
+    <!-- 内容区域 -->
+    <!-- 上下布局（默认） -->
+    <div v-if="!props.appConfig.window.splitLayout" class="flex-1 overflow-y-auto scrollbar-thin">
       <!-- 消息内容 - 允许选中 -->
       <div class="mx-2 mt-2 mb-1 px-4 py-3 bg-black-100 rounded-lg select-text" data-guide="popup-content">
         <PopupContent :request="request" :loading="loading" :current-theme="props.appConfig.theme" @quote-message="handleQuoteMessage" />
@@ -683,8 +685,46 @@ function handleOpenIndexStatus() {
       </div>
     </div>
 
-    <!-- 底部操作栏 - 固定在底部 -->
-    <div class="flex-shrink-0 bg-black-100 border-t-2 border-black-200" data-guide="popup-actions">
+    <!-- 左右分栏布局 -->
+    <div v-else class="flex-1 flex flex-row min-h-0 overflow-hidden">
+      <!-- 左侧：AI回复内容（50%） -->
+      <div class="w-1/2 overflow-y-auto scrollbar-thin border-r border-gray-700/50">
+        <div class="mx-2 mt-2 mb-1 px-4 py-3 bg-black-100 rounded-lg select-text" data-guide="popup-content">
+          <PopupContent :request="request" :loading="loading" :current-theme="props.appConfig.theme" @quote-message="handleQuoteMessage" />
+        </div>
+      </div>
+
+      <!-- 右侧：用户交互区 + 底部操作栏（50%） -->
+      <div class="w-1/2 flex flex-col min-h-0 overflow-hidden">
+        <!-- 输入和选项 - 独立滚动 -->
+        <div class="flex-1 overflow-y-auto scrollbar-thin">
+          <div class="px-4 pb-3 bg-black select-text">
+            <PopupInput
+              ref="inputRef" :request="request" :loading="loading" :submitting="submitting"
+              :enhance-enabled="localEnhanceEnabled"
+              @update="handleInputUpdate" @image-add="handleImageAdd" @image-remove="handleImageRemove"
+              @enhance="handleEnhance"
+              @open-mcp-tools-tab="handleOpenMcpToolsTab"
+            />
+          </div>
+        </div>
+
+        <!-- 底部操作栏 - 固定在右侧底部 -->
+        <div class="flex-shrink-0 bg-black-100 border-t-2 border-black-200" data-guide="popup-actions">
+          <PopupActions
+            :request="request" :loading="loading" :submitting="submitting" :can-submit="canSubmit"
+            :can-enhance="canEnhance"
+            :continue-reply-enabled="continueReplyEnabled" :input-status-text="inputStatusText"
+            :enhance-enabled="localEnhanceEnabled"
+            @submit="handleSubmit" @continue="handleContinue" @enhance="handleEnhance"
+            @open-mcp-tools-tab="handleOpenMcpToolsTab"
+          />
+        </div>
+      </div>
+    </div>
+
+    <!-- 底部操作栏 - 上下布局时固定在底部 -->
+    <div v-if="!props.appConfig.window.splitLayout" class="flex-shrink-0 bg-black-100 border-t-2 border-black-200" data-guide="popup-actions">
       <PopupActions
         :request="request" :loading="loading" :submitting="submitting" :can-submit="canSubmit"
         :can-enhance="canEnhance"
